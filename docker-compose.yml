@@ -1,0 +1,56 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - DOCS_ROOT=/docs
+      - OTEL_ENABLED=${OTEL_ENABLED:-0}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - USE_OPENAI_EMBEDDINGS=${USE_OPENAI_EMBEDDINGS:-0}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_EMBEDDINGS_MODEL=${OPENAI_EMBEDDINGS_MODEL:-text-embedding-3-small}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-60}
+      - CACHE_TTL_SECONDS=${CACHE_TTL_SECONDS:-600}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PIPELINE_LOG_ENABLED=${PIPELINE_LOG_ENABLED:-0}
+      - PIPELINE_LOG_INCLUDE_TEXT=${PIPELINE_LOG_INCLUDE_TEXT:-0}
+      # Trace store (opcional)
+      - TRACE_SINK=${TRACE_SINK:-noop} # noop | mysql
+      - TRACE_SINK_QUEUE_SIZE=${TRACE_SINK_QUEUE_SIZE:-1000}
+      - MYSQL_HOST=${MYSQL_HOST:-}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-}
+      # Para Azure MySQL (TLS): aponta para o CA dentro do container (pode sobrescrever no .env)
+      - MYSQL_SSL_CA=${MYSQL_SSL_CA:-/app/certs/DigiCertGlobalRootCA.crt.pem}
+    volumes:
+      # Relatórios/Docs gerados pelos scripts
+      - ./docs:/app/docs
+      # Documentos de entrada (host -> /docs)
+      - ${DOCS_HOST_PATH:-./DOC-IA}:/docs:ro
+    depends_on:
+      - qdrant
+      - redis
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_PORT:-6335}:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+volumes:
+  qdrant_storage:
+

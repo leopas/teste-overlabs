@@ -1,0 +1,1 @@
+Dados pessoais sensíveis não devem ser exibidos por sistemas automatizados.

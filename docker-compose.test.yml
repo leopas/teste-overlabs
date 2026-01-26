@@ -1,0 +1,16 @@
+services:
+  qdrant-test:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6336:6333"
+    volumes:
+      - qdrant_test_storage:/qdrant/storage
+
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+
+volumes:
+  qdrant_test_storage:
+

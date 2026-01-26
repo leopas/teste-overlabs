@@ -1,0 +1,42 @@
+Nome: João Silva
+Cargo: Analista Financeiro
+Departamento: Financeiro
+Cidade: São Paulo
+Gestor: Maria Oliveira
+CPF: 123.456.789-00
+
+--------------------------------------------------
+
+Nome: Maria Oliveira
+Cargo: Gerente Financeira
+Departamento: Financeiro
+Cidade: São Paulo
+Gestor: Carlos Mendes
+CPF: 987.654.321-00
+
+--------------------------------------------------
+
+Nome: Carlos Mendes
+Cargo: Diretor Financeiro (CFO)
+Departamento: Diretoria
+Cidade: Rio de Janeiro
+Gestor: Não aplicável
+CPF: 111.222.333-44
+
+--------------------------------------------------
+
+Nome: Ana Pereira
+Cargo: Analista de Recursos Humanos
+Departamento: RH
+Cidade: Belo Horizonte
+Gestor: Fernanda Costa
+CPF: 555.666.777-88
+
+--------------------------------------------------
+
+Nome: Fernanda Costa
+Cargo: Gerente de Recursos Humanos
+Departamento: RH
+Cidade: Belo Horizonte
+Gestor: Carlos Mendes
+CPF: 999.888.777-66

@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+from qdrant_client import QdrantClient
+from qdrant_client.http.exceptions import UnexpectedResponse
+
+from .config import settings
+
+
+COLLECTION_NAME = "docs_chunks"  # legado (mantido), mas use settings.qdrant_collection
+
+
+@dataclass(frozen=True)
+class RetrievedChunk:
+    text: str
+    title: str
+    path: str
+    doc_type: str
+    updated_at: float
+    trust_score: float
+    freshness_score: float
+    similarity: float
+    final_score: float
+
+
+class EmbeddingsProvider:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise NotImplementedError
+
+
+class FastEmbedEmbeddings(EmbeddingsProvider):
+    """
+    Embeddings locais via FastEmbed (ONNX), evitando Torch/CUDA no container.
+    Modelo default: sentence-transformers/all-MiniLM-L6-v2 (384 dims).
+    """
+
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+        self._model_name = model_name
+        self._model = None
+
+    def _load(self) -> Any:
+        if self._model is None:
+            from fastembed import TextEmbedding
+
+            self._model = TextEmbedding(model_name=self._model_name)
+        return self._model
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        model = self._load()
+        # FastEmbed retorna um gerador de vetores (iterável)
+        vectors = list(model.embed(texts))
+        # cada item é np.ndarray-like; converter para list[float]
+        return [v.tolist() for v in vectors]
+
+
+class OpenAIEmbeddings(EmbeddingsProvider):
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+        self._client = httpx.AsyncClient(timeout=15.0)
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        payload = {"model": settings.openai_embeddings_model, "input": texts}
+        r = await self._client.post("https://api.openai.com/v1/embeddings", json=payload, headers=headers)
+        r.raise_for_status()
+        data = r.json()
+        return [item["embedding"] for item in data["data"]]
+
+
+def get_embeddings_provider() -> EmbeddingsProvider:
+    if settings.use_openai_embeddings and settings.openai_api_key:
+        return OpenAIEmbeddings(settings.openai_api_key)
+    return FastEmbedEmbeddings()
+
+
+def get_current_embedding_model_name() -> str:
+    if settings.use_openai_embeddings and settings.openai_api_key:
+        return settings.openai_embeddings_model
+    return "sentence-transformers/all-MiniLM-L6-v2"
+
+
+class QdrantStore:
+    def __init__(self) -> None:
+        self._client = QdrantClient(url=settings.qdrant_url, timeout=2.0)
+
+    def ready(self) -> bool:
+        try:
+            self._client.get_collections()
+            return True
+        except Exception:
+            return False
+
+    async def search(self, vector: list[float], top_k: int = 8) -> list[RetrievedChunk]:
+        # usar filtro None por padrão
+        try:
+            # qdrant-client >= 1.16 usa query_points
+            query_res = self._client.query_points(
+                collection_name=settings.qdrant_collection,
+                query=vector,
+                limit=top_k,
+                with_payload=True,
+            )
+            results = getattr(query_res, "points", query_res)
+        except UnexpectedResponse as e:
+            # coleção ainda não criada / não indexada
+            if getattr(e, "status_code", None) == 404:
+                return []
+            raise
+        chunks: list[RetrievedChunk] = []
+        for p in results:
+            payload = p.payload or {}
+            text = str(payload.get("text") or "")
+            title = str(payload.get("title") or "")
+            path = str(payload.get("path") or "")
+            doc_type = str(payload.get("doc_type") or "GENERAL")
+            updated_at = float(payload.get("updated_at") or 0.0)
+            trust_score = float(payload.get("trust_score") or 0.0)
+            freshness_score = float(payload.get("freshness_score") or 0.0)
+
+            similarity = float(p.score or 0.0)
+            # Normalização defensiva se vier em [-1,1]
+            if similarity < 0.0:
+                similarity = (similarity + 1.0) / 2.0
+
+            final_score = 0.55 * similarity + 0.30 * trust_score + 0.15 * freshness_score
+            chunks.append(
+                RetrievedChunk(
+                    text=text,
+                    title=title,
+                    path=path,
+                    doc_type=doc_type,
+                    updated_at=updated_at,
+                    trust_score=trust_score,
+                    freshness_score=freshness_score,
+                    similarity=similarity,
+                    final_score=final_score,
+                )
+            )
+
+        chunks.sort(key=lambda c: c.final_score, reverse=True)
+        return chunks
+
+
+def estimate_tokens(text: str) -> int:
+    # Aproximação grosseira: 1 token ~ 4 chars
+    return int(math.ceil(len(text) / 4.0))
+
+
+def select_evidence(chunks: list[RetrievedChunk], max_tokens: int = 2800) -> list[RetrievedChunk]:
+    selected: list[RetrievedChunk] = []
+    used = 0
+    for c in chunks:
+        t = estimate_tokens(c.text)
+        if selected and used + t > max_tokens:
+            break
+        selected.append(c)
+        used += t
+    return selected
+
+
+def excerpt(text: str, max_chars: int = 240) -> str:
+    s = " ".join(text.strip().split())
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 1] + "…"
+
+
+_NATIONAL_RE = re.compile(r"(?i)\bnacion(?:al|ais)\b")
+_INTERNATIONAL_RE = re.compile(r"(?i)\binternacion(?:al|ais)\b")
+_DAYS_RE = re.compile(r"(?i)\b\d+\s*(?:dia|dias)\b")
+
+
+def excerpt_for_question(text: str, question: str, max_chars: int = 240) -> str:
+    """
+    Excerpt mais objetivo: tenta recortar apenas sentenças relevantes ao escopo/termos da pergunta.
+    """
+    q = question.lower()
+    want_national = bool(_NATIONAL_RE.search(q))
+    want_international = bool(_INTERNATIONAL_RE.search(q))
+
+    # remove prefixo de metadata comum da ingestão
+    cleaned_lines: list[str] = []
+    for line in text.splitlines():
+        l = line.strip()
+        if not l:
+            continue
+        if l.lower().startswith("título/seção:"):
+            continue
+        cleaned_lines.append(l)
+    cleaned = " ".join(cleaned_lines)
+
+    # split simples em sentenças
+    raw_sentences = [s.strip() for s in re.split(r"[.\n]+", cleaned) if s.strip()]
+
+    # se pergunta define escopo, filtrar sentenças por escopo
+    scoped: list[str] = []
+    if want_national and not want_international:
+        scoped = [s for s in raw_sentences if _NATIONAL_RE.search(s)]
+    elif want_international and not want_national:
+        scoped = [s for s in raw_sentences if _INTERNATIONAL_RE.search(s)]
+    else:
+        scoped = raw_sentences
+
+    # score por overlap simples de palavras (sem stopwords) + bônus por conter número/dias
+    tokens = [t for t in re.findall(r"[a-zA-ZÀ-ÿ0-9]+", q) if len(t) >= 4]
+    stop = {"qual", "quais", "prazo", "prazo", "para", "como", "quando", "onde", "sobre", "despesas", "reembolso"}
+    tokens = [t for t in tokens if t not in stop]
+
+    def score(s: str) -> int:
+        s_l = s.lower()
+        sc = 0
+        for t in tokens:
+            if t in s_l:
+                sc += 2
+        if _DAYS_RE.search(s):
+            sc += 3
+        return sc
+
+    ranked = sorted(scoped, key=score, reverse=True)
+    # pegar 1-2 sentenças no máximo, até max_chars
+    out_parts: list[str] = []
+    used = 0
+    for s in ranked[:3]:
+        if not s:
+            continue
+        # evita incluir frase do escopo "oposto" quando pergunta é específica
+        if want_national and not want_international and _INTERNATIONAL_RE.search(s):
+            continue
+        if want_international and not want_national and _NATIONAL_RE.search(s):
+            continue
+        if out_parts and (used + 2 + len(s)) > max_chars:
+            break
+        out_parts.append(s)
+        used += len(s) + 1
+        if used >= max_chars:
+            break
+
+    if out_parts:
+        out = ". ".join(out_parts).strip()
+        if not out.endswith("."):
+            out += "."
+        return excerpt(out, max_chars=max_chars)
+
+    # fallback
+    return excerpt(cleaned, max_chars=max_chars)
+
