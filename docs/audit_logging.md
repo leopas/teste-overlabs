@@ -37,7 +37,8 @@ Sistema de audit que persiste rastreabilidade das interações com `POST /ask`: 
 ### Quando o firewall bloqueia (rule_id)
 
 - Em `audit_ask` fica `refusal_reason = 'guardrail_firewall'` e **`firewall_rule_ids`** (JSON array de rule_ids que bloquearam, ex: `'["inj_ignore_previous_instructions"]'`).
-- O campo `firewall_rule_ids` é `TEXT NULL`; preenchido apenas quando há bloqueio pelo Prompt Firewall; `NULL` caso contrário.
+- O campo `firewall_rule_ids` é `TEXT NULL`; preenchido quando há bloqueio pelo **Prompt Firewall** (`refusal_reason=guardrail_firewall`) ou pelo **fallback heurístico** (`refusal_reason=guardrail_injection`); `NULL` caso contrário (ex.: recusa por sensitive/PII, rate limit, etc.).
+- **Nota:** O fallback heurístico (`detect_prompt_injection`) grava `firewall_rule_ids = '["inj_fallback_heuristic"]'` para manter rastreabilidade mesmo quando o Prompt Firewall está desabilitado. Ver [prompt_firewall.md](prompt_firewall.md#fallback-quando-firewall-está-disabled).
 - **O `rule_id` também existe em logs:** evento `firewall_block` (rule_id, category, question_hash, trace_id, request_id) e `guardrail_block` com `rule_id` e `category`.
 
 ## Configuração
@@ -295,12 +296,13 @@ O sistema segue o princípio de "mínimo necessário":
 - Comparar `X-Answer-Source` (CACHE / LLM / REFUSAL) com `audit_ask.answer_source` e com `refusal_reason` quando for REFUSAL.
 - Consultar `audit_ask` e `audit_retrieval_chunk` por `trace_id` retornado nos headers; verificar chunks apenas quando houve retrieval (não em cache hit puro nem em recusa antes do retriever).
 - Para bloqueios pelo Prompt Firewall: verificar que `refusal_reason = 'guardrail_firewall'` e `firewall_rule_ids` contém JSON array com o `rule_id` (ex: `'["inj_ignore_previous_instructions"]'`).
+- Para bloqueios por fallback heurístico: verificar que `refusal_reason = 'guardrail_injection'` e `firewall_rule_ids = '["inj_fallback_heuristic"]'`.
 
 ## Limitações
 
 - Audit depende de `TRACE_SINK=mysql` e `MYSQL_*`; com `noop`, nada é persistido.
 - Worker assíncrono: em fila cheia, eventos podem ser descartados (warning em log).
-- `firewall_rule_ids` é preenchido apenas quando há bloqueio pelo Prompt Firewall; `NULL` caso contrário.
+- `firewall_rule_ids` é preenchido quando há bloqueio pelo Prompt Firewall (`guardrail_firewall`) ou pelo fallback heurístico (`guardrail_injection`); `NULL` caso contrário (ex.: `guardrail_sensitive`, `rate_limited`, etc.).
 
 ## Troubleshooting
 

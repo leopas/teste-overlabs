@@ -1,0 +1,27 @@
+# Arquivos a ignorar no build do Docker para Azure
+.git
+.gitignore
+.env
+*.md
+!docs/**/*.md
+azure/
+artifacts/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.vscode/
+.idea/
+*.log
+node_modules/
+.DS_Store
+Thumbs.db

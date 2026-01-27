@@ -114,6 +114,9 @@ Resumo: [Runbook](runbook.md), [Traceability](traceability.md), [Audit](audit_lo
 | [Runbook](runbook.md) | Como rodar, scan/ingest, cache, Qdrant, Redis |
 | [Diagramas](diagrams.md) | Galeria de diagramas Mermaid com links para os docs |
 | [Apêndice – fatos do código](appendix_code_facts.md) | Referência para auditoria (endpoints, headers, hashing, conflito, módulos) |
+| [Snapshot do código](code_snapshot.md) | Estrutura completa, módulos, responsabilidades, estatísticas e referência rápida |
+| [Aderência: Documentação ↔ Código](implementation_adherence_report.md) | Relatório de auditoria de aderência (Prompt Firewall e Audit Logging) |
+| [Evidence Map](implementation_evidence_map.md) | Mapeamento de declarações testáveis da documentação para evidências no código |
 
 ---
 

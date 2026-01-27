@@ -28,7 +28,7 @@ todos:
 ## Escopo e premissas (R1)
 
 - **Objetivo**: MVP RAG avaliável com **recusa quando não há evidência** e **priorização de fontes confiáveis/mais recentes**.
-- **Docs locais**: usar [`C:\Projetos\teste-wayon\DOC-IA`](C:\Projetos\teste-wayon\DOC-IA) montado no container como `/docs` via `DOCS_ROOT=/docs`.
+- **Docs locais**: usar [`C:\Projetos\teste-overlabs\DOC-IA`](C:\Projetos\teste-overlabs\DOC-IA) montado no container como `/docs` via `DOCS_ROOT=/docs`.
 - **Formato dos docs observados**:
   - `Policy/Manual`: ex. `política_reembolso_v3` tem **título + data** e enunciados curtos; `manual_financeiro` explicita regra “**em caso de conflito, usar política mais recente**”.
   - `FAQ`: `faq_reembolso_antigo` usa `Pergunta:` / `Resposta:`.

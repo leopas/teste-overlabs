@@ -13,11 +13,11 @@ Backend com RAG e **recusa quando não há evidência**, priorizando documentos 
 
 ### Pré-requisitos
 - Docker + Docker Compose (no Windows, normalmente via Docker Desktop)
-- A pasta de documentos do desafio disponível no host (ex.: `C:/Projetos/teste-wayon/DOC-IA`)
+- A pasta de documentos do desafio disponível no host (ex.: `C:/Projetos/teste-overlabs/DOC-IA`)
 
 ### Como rodar
 1) (Opcional) Crie um `.env` a partir de `env.example` e ajuste `DOCS_HOST_PATH`.
-   - Exemplo (Windows): `DOCS_HOST_PATH=C:/Projetos/teste-wayon/DOC-IA`
+   - Exemplo (Windows): `DOCS_HOST_PATH=C:/Projetos/teste-overlabs/DOC-IA`
    - Porta padrão do Qdrant no host: `QDRANT_PORT=6335` (mude se já estiver em uso)
    - Para **logs detalhados do pipeline** do `/ask`:
      - `PIPELINE_LOG_ENABLED=1`

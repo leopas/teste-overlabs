@@ -19,6 +19,7 @@ O **Prompt Firewall** é uma camada configurável de regras regex executada **an
 | `PROMPT_FIREWALL_RULES_PATH` | Caminho do arquivo de regras (relativo ao CWD ou absoluto) | `config/prompt_firewall.regex` |
 | `PROMPT_FIREWALL_MAX_RULES` | Número máximo de regras carregadas (proteção) | `200` |
 | `PROMPT_FIREWALL_RELOAD_CHECK_SECONDS` | Intervalo mínimo (em segundos) entre checagens de `mtime` | `2` |
+| `FIREWALL_LOG_SAMPLE_RATE` | Taxa de amostragem para logs de checks não bloqueados (0.0 a 1.0) | `0.01` |
 
 ## Formato do arquivo de regras
 

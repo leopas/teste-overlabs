@@ -71,19 +71,20 @@ Ordem executada no código:
 
 1. **Valida input** (`question` 3–2000 chars, sem caracteres de controle).
 2. **Rate limit** (Redis por IP); excedido → REFUSAL.
-3. **Prompt Firewall** (se habilitado): regras regex; match → REFUSAL, sem retriever/LLM.
-4. **Guardrails:** injection (regex) e sensitive/PII (CPF, cartão, senha, etc.) → REFUSAL.
-5. **Normaliza** pergunta (`security.normalize_question`: strip, lower, colapsa whitespace).
-6. **Cache** Redis: key = `sha256(normalized)`; hit → 200 + `X-Answer-Source=CACHE`.
-7. **Embedding** (fastembed ou OpenAI) + **Qdrant** `top_k=8`.
-8. **Re-rank** (confiança/recência), **select_evidence** (limite tokens), **detecção de conflito**.
-9. **Conflito** (`quality.detect_conflict`): prazos em dias e datas `dd/mm/yyyy` por escopo (nacional/internacional/geral). Conflito irresolúvel → REFUSAL.
-10. **LLM** (OpenAI ou stub): refusal/vazio → REFUSAL.
-11. **Qualidade:**  
+3. **Classificação de abuso** (`abuse_classifier.classify`): calcula `risk_score` e `flags` via Prompt Firewall `scan_for_abuse()` quando habilitado + detecção local de PII/sensível. Usado para audit e decisão de criptografia raw.
+4. **Prompt Firewall** (se habilitado): regras regex via `check()`; match → REFUSAL, sem retriever/LLM. Persiste `firewall_rule_ids` no audit.
+5. **Guardrails fallback:** injection (regex em `security.py`) quando firewall está disabled → REFUSAL. Sensitive/PII (`security.detect_sensitive_request`) → REFUSAL. Nota: `abuse_classifier` calcula `risk_score` para audit, mas não bloqueia diretamente.
+6. **Normaliza** pergunta (`security.normalize_question`: strip, lower, colapsa whitespace).
+7. **Cache** Redis: key = `sha256(normalized)`; hit → 200 + `X-Answer-Source=CACHE`.
+8. **Embedding** (fastembed ou OpenAI) + **Qdrant** `top_k=8`.
+9. **Re-rank** (confiança/recência), **select_evidence** (limite tokens), **detecção de conflito**.
+10. **Conflito** (`quality.detect_conflict`): prazos em dias e datas `dd/mm/yyyy` por escopo (nacional/internacional/geral). Conflito irresolúvel → REFUSAL.
+11. **LLM** (OpenAI ou stub): refusal/vazio → REFUSAL.
+12. **Qualidade:**  
     - **Threshold** de confidence (&lt; 0,65 → REFUSAL).  
     - **Cross-check** (`cross_check_ok`): 2+ fontes distintas **ou** 1 fonte POLICY/MANUAL com trust ≥ 0,85; sem conflito.  
     - **Pós-validação** (`post_validate_answer`): números citados na resposta devem existir nos trechos de evidência; caso contrário → REFUSAL.
-12. **Resposta** 200; `X-Answer-Source` = CACHE | LLM | REFUSAL. Audit (session, message, ask; chunks quando há retrieval). **Classificação de abuso** (risk_score, flags) calculada via Prompt Firewall `scan_for_abuse()` quando habilitado + detecção local de PII/sensível.
+13. **Resposta** 200; `X-Answer-Source` = CACHE | LLM | REFUSAL. Audit (session, message, ask; chunks quando há retrieval). `abuse_risk_score` e `abuse_flags_json` persistidos em `audit_ask`; `firewall_rule_ids` quando bloqueado pelo firewall.
 
 Diagrama de sequência: [diagrams.md#c](diagrams.md#c-sequência-do-ask-detalhado).
 
@@ -136,6 +137,7 @@ Apenas **nomes**; não incluir valores reais.
 - `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`
 - `TRACE_SINK` (noop | mysql), `MYSQL_*`
 - `AUDIT_LOG_ENABLED`, `AUDIT_LOG_INCLUDE_TEXT`, `AUDIT_LOG_RAW_MODE`, `AUDIT_ENC_KEY_B64`, etc.
+- `ABUSE_CLASSIFIER_ENABLED`, `ABUSE_RISK_THRESHOLD`
 - `PROMPT_FIREWALL_ENABLED`, `PROMPT_FIREWALL_RULES_PATH`
 
 ---
@@ -163,8 +165,9 @@ Ver [README](README.md) (Guia do avaliador) e [appendix_code_facts.md](appendix_
 | Módulo | Responsabilidade |
 |--------|------------------|
 | `app.main` | FastAPI, `/ask`, guardrails, firewall, cache, retrieval, LLM, quality, audit, headers |
-| `app.security` | `normalize_question`, `detect_prompt_injection`, `detect_sensitive_request` |
-| `app.prompt_firewall` | Regras regex, `normalize_for_firewall`, `check()`, métricas firewall |
+| `app.security` | `normalize_question`, `detect_prompt_injection` (fallback quando firewall disabled), `detect_sensitive_request` |
+| `app.prompt_firewall` | Regras regex, `normalize_for_firewall`, `check()` (bloqueio), `scan_for_abuse()` (classificação de risco), métricas firewall |
+| `app.abuse_classifier` | `classify()` (integra Prompt Firewall quando habilitado), detecção local de PII/sensível, `should_save_raw()`, `flags_to_json()` |
 | `app.cache` | `cache_key_for_question` (SHA256), Redis get/set, rate limit |
 | `app.retrieval` | Embeddings, Qdrant, `select_evidence`, re-rank |
 | `app.quality` | Conflito, confidence, threshold, cross-check, post-validate |
