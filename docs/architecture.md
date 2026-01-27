@@ -41,15 +41,15 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph host["Host"]
-        DOCS[/docs ← DOCS_HOST_PATH]
-        DOCS_APP[./docs → /app/docs]
-        CFG[./config → /app/config]
+        DOCS["/docs from DOCS_HOST_PATH"]
+        DOCS_APP["./docs to /app/docs"]
+        CFG["./config to /app/config"]
     end
 
     subgraph compose["Docker Compose"]
-        API[api :8000]
-        QD[qdrant :6335→6333]
-        RD[redis :6379]
+        API["api :8000"]
+        QD["qdrant :6335 to 6333"]
+        RD["redis :6379"]
     end
 
     API --> DOCS
@@ -57,7 +57,7 @@ flowchart LR
     API --> CFG
     API --> QD
     API --> RD
-    QD --> VOL[(qdrant_storage)]
+    QD --> VOL[("qdrant_storage")]
 ```
 
 - **Portas:** API 8000, Qdrant 6335→6333, Redis 6379.
