@@ -1,0 +1,49 @@
+version: '3.8'
+
+# Docker Compose para produção no Azure App Service
+# Variáveis de ambiente vêm dos App Settings (configurados via bootstrap)
+# IMAGE_TAG é injetado pelo GitHub Actions workflow
+
+services:
+  api:
+    image: acrchoperia.azurecr.io/choperia-api:${IMAGE_TAG:-latest}
+    ports:
+      - "8000:8000"
+    # Variáveis de ambiente são injetadas via App Settings do App Service
+    # Não definir aqui para evitar duplicação
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - qdrant
+      - redis
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "no"]
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: /mnt/qdrant
+      o: bind

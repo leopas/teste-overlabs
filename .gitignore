@@ -41,6 +41,8 @@ apikey*.json
 /.aws/
 /private/
 /credentials/
+/.azure/
+!.azure/.gitkeep
 
 # Python
 __pycache__/

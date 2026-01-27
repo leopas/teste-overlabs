@@ -1,0 +1,262 @@
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# Evitar deploys paralelos
+concurrency:
+  group: deploy-azure-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACR_NAME: acrchoperia
+  IMAGE_NAME: choperia-api
+  COMPOSE_FILE: docker-compose.azure.yml
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Validate .env structure
+        run: |
+          if [ ! -f .env ]; then
+            echo "⚠️  .env não encontrado (pode ser esperado se secrets estão no Key Vault)"
+          else
+            python infra/validate_env.py --env .env
+          fi
+      
+      - name: Check deploy state
+        run: |
+          if [ ! -f .azure/deploy_state.json ]; then
+            echo "❌ .azure/deploy_state.json não encontrado"
+            echo "   Execute: python infra/bootstrap_azure.py --env .env --stage prod"
+            exit 1
+          fi
+          echo "✅ deploy_state.json encontrado"
+          cat .azure/deploy_state.json | jq '.'
+
+  build:
+    name: Build and Push
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-Azure-RBAC: true
+      
+      - name: Login to ACR
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.sha }},enable=true
+      
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:buildcache,mode=max
+      
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+      
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-Azure-RBAC: true
+      
+      - name: Load deploy state
+        id: state
+        run: |
+          if [ ! -f .azure/deploy_state.json ]; then
+            echo "❌ deploy_state.json não encontrado"
+            exit 1
+          fi
+          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+      
+      - name: Generate compose with image tag
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          sed "s/\${IMAGE_TAG:-latest}/$IMAGE_TAG/g" ${{ env.COMPOSE_FILE }} > docker-compose.deploy.yml
+          echo "📋 Compose file gerado:"
+          cat docker-compose.deploy.yml
+      
+      - name: Deploy to staging slot
+        run: |
+          az webapp config container set \
+            --name ${{ steps.state.outputs.app_name }} \
+            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --slot staging \
+            --multicontainer-config-type compose \
+            --multicontainer-config-file docker-compose.deploy.yml
+      
+      - name: Restart staging slot
+        run: |
+          az webapp restart \
+            --name ${{ steps.state.outputs.app_name }} \
+            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --slot staging
+
+  smoke-staging:
+    name: Smoke Test Staging
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Load deploy state
+        id: state
+        run: |
+          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          STAGING_URL="https://${APP_NAME}-staging.azurewebsites.net"
+          echo "staging_url=$STAGING_URL" >> $GITHUB_OUTPUT
+      
+      - name: Wait for deployment
+        run: |
+          echo "⏳ Aguardando 30s para deployment estabilizar..."
+          sleep 30
+      
+      - name: Run smoke test
+        run: |
+          chmod +x infra/smoke_test.sh
+          infra/smoke_test.sh ${{ steps.state.outputs.staging_url }} 30 5 2
+
+  swap:
+    name: Swap Staging to Production
+    runs-on: ubuntu-latest
+    needs: smoke-staging
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-Azure-RBAC: true
+          enable-Azure-RBAC: true
+      
+      - name: Load deploy state
+        id: state
+        run: |
+          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+      
+      - name: Swap slots
+        run: |
+          echo "🔄 Fazendo swap staging → production..."
+          az webapp deployment slot swap \
+            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --name ${{ steps.state.outputs.app_name }} \
+            --slot staging \
+            --target-slot production
+          echo "✅ Swap concluído"
+
+  smoke-prod:
+    name: Smoke Test Production
+    runs-on: ubuntu-latest
+    needs: swap
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Load deploy state
+        id: state
+        run: |
+          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          PROD_URL="https://${APP_NAME}.azurewebsites.net"
+          echo "prod_url=$PROD_URL" >> $GITHUB_OUTPUT
+      
+      - name: Wait for swap
+        run: |
+          echo "⏳ Aguardando 30s para swap estabilizar..."
+          sleep 30
+      
+      - name: Run smoke test
+        run: |
+          chmod +x infra/smoke_test.sh
+          infra/smoke_test.sh ${{ steps.state.outputs.prod_url }} 30 5 2
+      
+      - name: Deployment summary
+        run: |
+          echo "## ✅ Deploy Concluído" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL de Produção:** ${{ steps.state.outputs.prod_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.event.head_commit.message }}" >> $GITHUB_STEP_SUMMARY
