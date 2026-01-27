@@ -117,6 +117,13 @@ jobs:
           exit-code: '0'
           ignore-unfixed: true
           skip-version-check: true
+      
+      - name: Scan Python code with Bandit
+        continue-on-error: true
+        run: |
+          pip install bandit[toml]
+          bandit -r backend/app -f json -o bandit-report.json || true
+          bandit -r backend/app -f txt || true
 
   deploy-staging:
     name: Deploy to Staging
