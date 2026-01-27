@@ -13,4 +13,5 @@ opentelemetry-exporter-otlp>=1.24
 opentelemetry-instrumentation-fastapi>=0.45b0
 opentelemetry-instrumentation-httpx>=0.45b0
 fastembed>=0.7
+cryptography>=42.0.0
 

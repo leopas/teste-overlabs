@@ -13,6 +13,8 @@ from typing import Any, Protocol
 
 import structlog
 
+from .redaction import redact_text
+
 
 log = structlog.get_logger("trace_store")
 
@@ -29,20 +31,7 @@ def hash_chunk(text: str) -> str:
     return sha256_hex(text)
 
 
-_CPF_RE = re.compile(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b|\b\d{11}\b")
-_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
-_TOKEN_RE = re.compile(r"(?i)\b(bearer\s+[a-z0-9\-\._~\+/]+=*)\b")
-_APIKEY_RE = re.compile(r"(?i)\b(api[_ -]?key|token|secret|senha|password)\b")
-
-
-def redact_text(text: str) -> str:
-    s = text
-    s = _CPF_RE.sub("[REDACTED_CPF]", s)
-    s = _CARD_RE.sub("[REDACTED_CARD]", s)
-    s = _TOKEN_RE.sub("bearer [REDACTED_TOKEN]", s)
-    # não remove palavras-chaves (para debug), mas ajuda a evitar leak acidental
-    s = _APIKEY_RE.sub("[REDACTED_SECRET_KEYWORD]", s)
-    return s
+# redact_text agora está em redaction.py (importado acima)
 
 
 @dataclass

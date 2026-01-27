@@ -30,6 +30,18 @@ class Settings(BaseSettings):
     # 0 = não loga excerpts/chunks; 1 = loga excerpt curto por chunk
     pipeline_log_include_text: bool = False
 
+    # Auditoria / rastreabilidade
+    audit_log_enabled: bool = True
+    trace_sink: str = "noop"  # noop|mysql
+    audit_log_include_text: bool = True
+    audit_log_raw_mode: str = "risk_only"  # off|risk_only|always
+    audit_log_raw_max_chars: int = 2000
+    audit_log_redact: bool = True
+    audit_enc_key_b64: str | None = None
+    audit_enc_aad_mode: str = "trace_id"  # trace_id|request_id|none
+    abuse_classifier_enabled: bool = True
+    abuse_risk_threshold: float = 0.80
+
 
 settings = Settings()
 

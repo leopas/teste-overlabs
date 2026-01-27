@@ -48,6 +48,80 @@ docker compose run --rm api python scripts/scan_docs.py
 docker compose run --rm api python scripts/ingest.py
 ```
 
+### Auditabilidade e Rastreabilidade
+
+O sistema persiste rastreabilidade completa de todas as interações com `/ask`:
+
+- **Chat log completo**: Perguntas e respostas (user/assistant) com redação automática de PII
+- **Metadados técnicos**: Origem da resposta (CACHE/LLM/REFUSAL), latência, confiança, chunks retornados
+- **Classificação de abuso**: Score de risco e flags de detecção
+- **Criptografia opcional**: Texto bruto criptografado (AES-256-GCM) para casos de alto risco
+
+#### Headers de Resposta
+
+Todas as respostas do `/ask` incluem:
+
+- `X-Trace-ID`: ID único do trace (correlaciona com `trace_id` no DB)
+- `X-Answer-Source`: Origem da resposta (`CACHE`, `LLM`, ou `REFUSAL`)
+- `X-Chat-Session-ID`: ID da sessão de chat (persistido entre requests)
+
+#### Exemplo de Uso
+
+```python
+import httpx
+
+# Primeira chamada (gera session_id)
+response = httpx.post("http://localhost:8000/ask", json={"question": "Qual o prazo?"})
+session_id = response.headers["X-Chat-Session-ID"]
+trace_id = response.headers["X-Trace-ID"]
+answer_source = response.headers["X-Answer-Source"]
+
+print(f"Session: {session_id}, Trace: {trace_id}, Source: {answer_source}")
+
+# Segunda chamada (reutiliza session_id)
+response2 = httpx.post(
+    "http://localhost:8000/ask",
+    json={"question": "Qual a política?"},
+    headers={"X-Chat-Session-ID": session_id}
+)
+# session_id será o mesmo
+assert response2.headers["X-Chat-Session-ID"] == session_id
+```
+
+#### Configuração
+
+Para habilitar audit logging no MySQL, configure no `.env`:
+
+```bash
+AUDIT_LOG_ENABLED=1
+TRACE_SINK=mysql
+AUDIT_LOG_INCLUDE_TEXT=1
+AUDIT_LOG_RAW_MODE=risk_only  # off|risk_only|always
+AUDIT_ENC_KEY_B64=<chave_base64_32_bytes>  # Opcional para criptografia
+ABUSE_CLASSIFIER_ENABLED=1
+ABUSE_RISK_THRESHOLD=0.80
+
+# MySQL
+MYSQL_HOST=<host>
+MYSQL_PORT=3306
+MYSQL_DATABASE=<database>
+MYSQL_USER=<user>
+MYSQL_PASSWORD=<password>
+```
+
+Aplique o schema SQL:
+
+```bash
+# Dentro do container ou localmente com mysql client
+mysql -h <host> -u <user> -p <database> < docs/db_audit_schema.sql
+```
+
+**Documentação completa**: Veja [docs/audit_logging.md](docs/audit_logging.md) para:
+- Queries SQL úteis
+- Como gerar chave de criptografia
+- Retenção recomendada
+- Troubleshooting
+
 > R1 ingere apenas `.txt` e `.md`. Arquivos com indícios de PII (ex.: CPF) e/ou `funcionarios` no nome **são ignorados**.
 
 ### Testar o `/ask`
