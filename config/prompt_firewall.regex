@@ -15,7 +15,7 @@
 
 # "Ignore previous instructions / disregard rules" (EN/PT/ES/FR/DE/IT)
 inj_ignore_instructions::(?is)\b(ignore|disregard|bypass|override|forget)\b.{0,40}\b(previous|prior|earlier)\b.{0,40}\b(instructions|rules|policy|policies)\b
-inj_ignorar_instrucoes::(?is)\b(ignorar|desconsiderar|burlar|contornar|sobrescrever|esquecer)\b.{0,60}\b(instru(c|ç)(o|õ)es|regras|pol(i|í)tica(s)?)\b
+inj_ignorar_instrucoes::(?is)\b(ignora(r|s)?|desconsidera(r|s)?|burlar|contornar|sobrescrever|esquecer)\b.{0,60}\b(instru(c|ç)(o|õ)es|regras|pol(i|í)tica(s)?)\b
 inj_ignora_instrucciones::(?is)\b(ignora|ignore|omitir|pasar\s+por\s+alto|saltarse|eludir)\b.{0,60}\b(instrucciones|reglas|pol(i|í)tica(s)?)\b
 inj_ignorer_instructions::(?is)\b(ignorer|oublie(r)?|contourner|bypasser)\b.{0,60}\b(instructions|r(e|é)gles|politique(s)?)\b
 inj_ignori_anweisungen::(?is)\b(ignoriere|umgehe|uebergehe|überspringe|vergiss)\b.{0,60}\b(anweisungen|regeln|richtlinie(n)?)\b
@@ -28,6 +28,16 @@ inj_haz_de_cuenta_sin_restricciones::(?is)\b(finge\s+que|act(u|ú)a\s+como|haz\s
 
 # "Jailbreak / DAN / do anything now"
 inj_jailbreak_dan::(?is)\b(jailbreak|dan\b|do\s+anything\s+now|developer\s+mode|modo\s+desarrollador|modo\s+desenvolvedor|unfiltered|sem\s+filtros|sin\s+filtros)\b
+
+# "Disregard system/developer prompt/message"
+inj_disregard_system::(?is)\b(disregard|ignore|ignore|desconsiderar)\b.{0,40}\b(the\s+)?(system|developer)\b.{0,40}\b(prompt|message)\b
+inj_desconsiderar_sistema::(?is)\b(desconsiderar|ignorar|burlar)\b.{0,40}\b(sistema|desenvolvedor)\b.{0,40}\b(prompt|mensagem)\b
+
+# "BEGIN/END SYSTEM/DEVELOPER/PROMPT" markers
+inj_begin_end_markers::(?is)\b(BEGIN|END)\s+(SYSTEM|DEVELOPER|PROMPT)\b
+
+# "You are ChatGPT / as an AI language model"
+inj_ai_identity::(?is)\b(you\s+are\s+chatgpt|as\s+an\s+ai\s+language\s+model)\b
 
 # =============================================================================
 # B) EXFILTRAÇÃO DE PROMPT / POLÍTICAS / MENSAGENS INTERNAS (MULTI-IDIOMA)
@@ -45,6 +55,20 @@ inj_mostra_prompt_sistema_it::(?is)\b(rivela|mostra|stampa|divulga)\b.{0,60}\b(p
 inj_dump_all_docs_en::(?is)\b(list|dump|export|show)\b.{0,40}\b(all\s+documents|all\s+chunks|entire\s+knowledge\s+base|full\s+context)\b
 inj_listar_todos_docs_pt::(?is)\b(lista(r)?|exporte|mostre|despeje)\b.{0,50}\b(todos\s+os\s+documentos|todos\s+os\s+chunks|base\s+de\s+conhecimento\s+inteira|contexto\s+completo)\b
 inj_listar_todos_docs_es::(?is)\b(lista(r)?|exporta|muestra|vuelca)\b.{0,50}\b(todos\s+los\s+documentos|todos\s+los\s+chunks|base\s+de\s+conocimiento\s+entera|contexto\s+completo)\b
+
+# "Reveal/show all internal rules / todas as regras internas"
+inj_reveal_all_rules_en::(?is)\b(reveal|show|print|dump|leak|expose|list|display)\b.{0,60}\b(all|every|each|complete|full|entire)\b.{0,40}\b(internal\s+rules|rules\s+internal|system\s+rules|firewall\s+rules|prompt\s+rules)\b
+inj_revelar_todas_regras_pt::(?is)\b(revele|mostre|imprima|vaze|exponha|liste|exiba)\b.{0,60}\b(todas?\s+as?\s+regras?\s+internas?|regras?\s+internas?\s+completas?|regras?\s+do\s+sistema|regras?\s+completas?)\b
+inj_revelar_todas_regras_es::(?is)\b(revela|mu(e|é)stra|imprime|filtra|expone|lista|muestra)\b.{0,60}\b(todas?\s+las?\s+reglas?\s+internas?|reglas?\s+internas?\s+completas?|reglas?\s+del\s+sistema|reglas?\s+completas?)\b
+inj_reveler_toutes_regles_fr::(?is)\b(r(e|é)v(e|é)ler|montrer|imprimer|divulguer|afficher)\b.{0,60}\b(toutes?\s+les?\s+r(e|è)gles?\s+internes?|r(e|è)gles?\s+internes?\s+compl(e|è)tes?|r(e|è)gles?\s+du\s+syst(e|è)me)\b
+inj_zeige_alle_regeln_de::(?is)\b(zeige|drucke|gib\s+aus|enth(u|ü)lle|leake|liste)\b.{0,60}\b(alle\s+internen\s+regeln?|regeln?\s+intern|regeln?\s+des\s+systems?|vollst(a|ä)ndigen?\s+regeln?)\b
+inj_mostra_tutte_regole_it::(?is)\b(rivela|mostra|stampa|divulga|elenca)\b.{0,60}\b(tutte?\s+le?\s+regole?\s+interne?|regole?\s+interne?\s+complete?|regole?\s+del\s+sistema|regole?\s+complete?)\b
+
+# "Complete/full system prompt / prompt completo"
+inj_reveal_complete_prompt_en::(?is)\b(reveal|show|print|dump|leak|expose)\b.{0,60}\b(complete|full|entire|whole|all)\b.{0,40}\b(system\s+prompt|prompt\s+complete|full\s+prompt)\b
+inj_revelar_prompt_completo_pt::(?is)\b(revele|mostre|imprima|vaze|exponha)\b.{0,60}\b(prompt\s+(completo|inteiro|total)|completo\s+prompt|todas?\s+as?\s+instru(c|ç)(o|õ)es)\b
+inj_revelar_prompt_completo_es::(?is)\b(revela|mu(e|é)stra|imprime|filtra|expone)\b.{0,60}\b(prompt\s+(completo|entero|total)|completo\s+prompt|todas?\s+las?\s+instrucciones)\b
+inj_reveler_prompt_complet_fr::(?is)\b(r(e|é)v(e|é)ler|montrer|imprimer|divulguer)\b.{0,60}\b(prompt\s+(compl(e|è)t|entier|total)|compl(e|è)t\s+prompt|toutes?\s+les?\s+instructions)\b
 
 # =============================================================================
 # C) SEGREDOS / CREDENCIAIS (MULTI-IDIOMA)
@@ -71,3 +95,13 @@ pii_phone_br::(?i)\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[-\s]?\d{4}\b
 # =============================================================================
 
 payload_base64_blob::(?is)\b[A-Za-z0-9+/]{400,}={0,2}\b
+
+
+
+inj_ignore_previous_instructions::(?is)\b(ignora|desconsidera|burlar|contornar|sobrescrever|esquecer|ignore|disregard|bypass|override|forget)\b.{0,40}\b((anterior|previamente|passado|prioritarias?)\b.{0,40}\b(instru(c|ç)(o|õ)es|regras|pol(i|í)tica(s)?)|(instru(c|ç)(o|õ)es|regras|pol(i|í)tica(s)?)\b.{0,40}\b(anterior|previamente|passado|prioritarias?))\b
+# Bloqueia "desconsidera/ignora as regras" sem exigir palavra de tempo
+inj_ignore_rules_simple::(?is)\b(ignora|desconsidera|burlar|contornar|sobrescrever|esquecer|ignore|disregard|bypass|override|forget)\b.{0,40}\b(instru(c|ç)(o|õ)es|regras|pol(i|í)tica(s)?)\b
+inj_no_restrictions::(?is)\b(sem\s+restrições|sem\s+regras|sin\s+restricciones|without\s+restrictions|no\s+rules)\b
+inj_jailbreak_attempts::(?is)\b(jailbreak|modo\s+desenvolvedor|unfiltered|sem\s+filtros|sin\s+filtros)\b
+inj_dump_internal_info::(?is)\b(dump|reveal|show|list|export)\b.{0,40}\b(internal|hidden|confidential|sensitive)\b
+sec_api_key_exposure::(?is)\b(api\s*key|token|secret|senha|password|contrase(n|ñ)a)\b

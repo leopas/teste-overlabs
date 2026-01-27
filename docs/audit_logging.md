@@ -23,7 +23,7 @@ Sistema de audit que persiste rastreabilidade das interações com `POST /ask`: 
 - **Hash** de pergunta e resposta (SHA256 do texto normalizado)
 - **Metadados**: trace_id, request_id, session_id, user_id, timestamps
 - **Resumo técnico**: answer_source, confidence, cache_hit, latency_ms, llm_model
-- **Classificação de abuso**: risk_score, flags (JSON array)
+- **Classificação de abuso**: `abuse_risk_score` (FLOAT 0.0-1.0), `abuse_flags_json` (JSON array) — calculado via Prompt Firewall (`scan_for_abuse()`) quando habilitado + detecção local de PII/sensível. Metodologia: [prompt_firewall.md#classificação-de-risco-scan_for_abuse](prompt_firewall.md#classificação-de-risco-scan_for_abuse).
 
 ### Quando `AUDIT_LOG_INCLUDE_TEXT=1`
 
@@ -36,9 +36,9 @@ Sistema de audit que persiste rastreabilidade das interações com `POST /ask`: 
 
 ### Quando o firewall bloqueia (rule_id)
 
-- Em `audit_ask` fica apenas `refusal_reason = 'guardrail_firewall'`; **o `rule_id` não é persistido no schema**.
-- **O `rule_id` existe em logs:** evento `firewall_block` (rule_id, category, question_hash, trace_id, request_id) e `guardrail_block` com `rule_id` e `category`. Para saber qual regra bloqueou, correlacione pelo `trace_id` com os logs.
-- **Roadmap / TODO:** persistir `rule_id` (ou equivalente) em `audit_ask` está fora do escopo atual; quando existir, será documentado aqui.
+- Em `audit_ask` fica `refusal_reason = 'guardrail_firewall'` e **`firewall_rule_ids`** (JSON array de rule_ids que bloquearam, ex: `'["inj_ignore_previous_instructions"]'`).
+- O campo `firewall_rule_ids` é `TEXT NULL`; preenchido apenas quando há bloqueio pelo Prompt Firewall; `NULL` caso contrário.
+- **O `rule_id` também existe em logs:** evento `firewall_block` (rule_id, category, question_hash, trace_id, request_id) e `guardrail_block` com `rule_id` e `category`.
 
 ## Configuração
 
@@ -65,6 +65,8 @@ AUDIT_ENC_AAD_MODE=trace_id   # trace_id|request_id|none
 # Classificação de abuso
 ABUSE_CLASSIFIER_ENABLED=1
 ABUSE_RISK_THRESHOLD=0.80
+# Nota: O abuse_classifier agora usa o Prompt Firewall (scan_for_abuse) para injection/exfiltração
+# quando PROMPT_FIREWALL_ENABLED=1, mantendo apenas detecção de PII/sensível localmente
 
 # MySQL
 MYSQL_HOST=<host>
@@ -89,7 +91,7 @@ O schema está em `docs/db_audit_schema.sql`. Tabelas principais:
 
 - **audit_session**: Sessões de chat
 - **audit_message**: Mensagens user/assistant (chat log)
-- **audit_ask**: Resumo técnico de cada chamada
+- **audit_ask**: Resumo técnico de cada chamada (inclui `firewall_rule_ids` quando bloqueado pelo Prompt Firewall)
 - **audit_retrieval_chunk**: Chunks retornados na consulta
 - **audit_vector_fingerprint**: Fingerprint do vetor de embedding (opcional)
 
@@ -139,6 +141,8 @@ WHERE abuse_risk_score >= 0.80
 ORDER BY created_at DESC;
 ```
 
+**Nota**: O `abuse_risk_score` é calculado pelo Prompt Firewall (`scan_for_abuse()`) quando `PROMPT_FIREWALL_ENABLED=1`, combinado com detecção local de PII/sensível. Categorias mapeiam para scores: INJECTION (0.5), EXFIL (0.4), SECRETS/PII (0.6), PAYLOAD (0.7). Múltiplas categorias aumentam o score. Ver [prompt_firewall.md#classificação-de-risco-scan_for_abuse](prompt_firewall.md#classificação-de-risco-scan_for_abuse).
+
 ### Respostas do Cache vs LLM
 
 ```sql
@@ -167,16 +171,38 @@ WHERE m.session_id = 'abc123'
 ORDER BY m.created_at;
 ```
 
-### Recusas por firewall (rule_id nos logs)
+### Recusas por firewall (com rule_id)
 
 ```sql
-SELECT trace_id, request_id, session_id, question_hash, created_at
+SELECT 
+    trace_id, 
+    request_id, 
+    session_id, 
+    question_hash, 
+    firewall_rule_ids,
+    created_at
 FROM audit_ask
 WHERE refusal_reason = 'guardrail_firewall'
 ORDER BY created_at DESC;
 ```
 
-Para obter o `rule_id` que bloqueou, correlacione `trace_id` com o evento `firewall_block` nos logs.
+### Recusas por regra específica do firewall
+
+```sql
+SELECT 
+    trace_id,
+    request_id,
+    session_id,
+    question_hash,
+    firewall_rule_ids,
+    created_at
+FROM audit_ask
+WHERE refusal_reason = 'guardrail_firewall'
+  AND JSON_CONTAINS(firewall_rule_ids, '"inj_ignore_previous_instructions"')
+ORDER BY created_at DESC;
+```
+
+O campo `firewall_rule_ids` contém um JSON array (ex: `'["inj_ignore_previous_instructions"]'`). Use `JSON_CONTAINS` para filtrar por regra específica.
 
 ## Answer source & provenance
 
@@ -268,12 +294,13 @@ O sistema segue o princípio de "mínimo necessário":
 - Enviar `POST /ask` com e sem `X-Chat-Session-ID`; conferir que o header é ecoado e que mensagens do mesmo `session_id` aparecem em `audit_message`.
 - Comparar `X-Answer-Source` (CACHE / LLM / REFUSAL) com `audit_ask.answer_source` e com `refusal_reason` quando for REFUSAL.
 - Consultar `audit_ask` e `audit_retrieval_chunk` por `trace_id` retornado nos headers; verificar chunks apenas quando houve retrieval (não em cache hit puro nem em recusa antes do retriever).
+- Para bloqueios pelo Prompt Firewall: verificar que `refusal_reason = 'guardrail_firewall'` e `firewall_rule_ids` contém JSON array com o `rule_id` (ex: `'["inj_ignore_previous_instructions"]'`).
 
 ## Limitações
 
-- `rule_id` do firewall não está no banco; usar logs para correlacionar.
 - Audit depende de `TRACE_SINK=mysql` e `MYSQL_*`; com `noop`, nada é persistido.
 - Worker assíncrono: em fila cheia, eventos podem ser descartados (warning em log).
+- `firewall_rule_ids` é preenchido apenas quando há bloqueio pelo Prompt Firewall; `NULL` caso contrário.
 
 ## Troubleshooting
 

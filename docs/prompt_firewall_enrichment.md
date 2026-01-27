@@ -2,6 +2,18 @@
 
 Ferramenta CLI para enriquecer `config/prompt_firewall.regex`: propõe novas regras multi-idioma (OpenAI), valida regex/perf/qualidade no corpus e gera sempre um **patch** revisável. Nunca edita o ficheiro de regras silenciosamente.
 
+## Idiomas suportados
+
+O enricher suporta os seguintes idiomas (códigos ISO 639-1):
+- **pt** — Português
+- **es** — Espanhol
+- **fr** — Francês
+- **de** — Alemão
+- **it** — Italiano
+- **en** — Inglês
+
+As propostas geradas incluem apenas idiomas desta lista. A lista está definida em `backend/scripts/enrich_prompt_firewall.py` na constante `SUPPORTED_LANGUAGES`.
+
 ## Comandos
 
 ### propose

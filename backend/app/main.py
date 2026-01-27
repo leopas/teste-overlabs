@@ -44,7 +44,7 @@ from .prompt_firewall import build_prompt_firewall
 from .redaction import normalize_text as redact_normalize, redact_text, sha256_text
 from .retrieval import EmbeddingsProvider, QdrantStore, excerpt, excerpt_for_question, get_embeddings_provider, select_evidence
 from .schemas import AskRequest, AskResponse, RefusalReason, SourceItem
-from .security import detect_prompt_injection, detect_sensitive_request, normalize_question
+from .security import detect_prompt_injection, detect_prompt_injection_details, detect_sensitive_request, normalize_question
 from .trace_store import PipelineTrace, get_trace_sink, hash_chunk
 
 
@@ -168,11 +168,12 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
         normalized_for_hash = normalize_question(req.question)
         question_hash = cache_key_for_question(normalized_for_hash)
 
-        # Abuse classification
+        # Abuse classification (agora usa Prompt Firewall quando disponível)
+        firewall = request.app.state.prompt_firewall
         abuse_risk_score = 0.0
         abuse_flags: list[str] = []
         if settings.abuse_classifier_enabled:
-            abuse_risk_score, abuse_flags = classify(req.question)
+            abuse_risk_score, abuse_flags = classify(req.question, prompt_firewall=firewall)
 
         # Normalizar pergunta para hash/redaction
         normalized_question = redact_normalize(req.question)
@@ -310,7 +311,7 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                 pass
 
             question = req.question
-            firewall = request.app.state.prompt_firewall
+            # firewall já foi obtido acima para abuse_classifier
             blocked, fw_details = firewall.check(question)
             if blocked:
                 rule_id = fw_details.get("rule_id", "unknown")
@@ -323,6 +324,7 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                 log_audit_message("assistant", REFUSAL_ANSWER)
                 answer_hash_audit = sha256_text(redact_normalize(REFUSAL_ANSWER))
                 latency_total = int((time.perf_counter() - start) * 1000)
+                firewall_rule_ids_json = json.dumps([rule_id]) if rule_id != "unknown" else None
                 audit_sink.enqueue_ask(
                     AuditAsk(
                         trace_id=trace_id,
@@ -338,6 +340,7 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                         latency_ms=latency_total,
                         abuse_risk_score=abuse_risk_score,
                         abuse_flags_json=flags_to_json(abuse_flags),
+                        firewall_rule_ids=firewall_rule_ids_json,
                     )
                 )
                 finish_trace("refused", refusal_reason.kind, 0.2, model=None)
@@ -347,10 +350,13 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                 response.headers["X-Chat-Session-ID"] = session_id
                 return response
 
-            if detect_prompt_injection(question):
-                refusal_reason = RefusalReason(kind="guardrail_injection", details={})
-                trace_event("guardrails.block", {"kind": "injection"})
-                _plog("guardrail_block", kind="injection")
+            # Fallback: detectar injection quando firewall está disabled
+            injection_blocked, injection_rule_id = detect_prompt_injection_details(question)
+            if injection_blocked:
+                rule_id = injection_rule_id or "inj_fallback_heuristic"
+                refusal_reason = RefusalReason(kind="guardrail_injection", details={"rule_id": rule_id})
+                trace_event("guardrails.block", {"kind": "injection", "rule_id": rule_id})
+                _plog("guardrail_block", kind="injection", rule_id=rule_id)
                 answer_source = "REFUSAL"
                 # Logar mensagens user e assistant (recusa)
                 log_audit_message("user", req.question)
@@ -358,6 +364,7 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                 # Logar audit_ask
                 answer_hash_audit = sha256_text(redact_normalize(REFUSAL_ANSWER))
                 latency_total = int((time.perf_counter() - start) * 1000)
+                firewall_rule_ids_json = json.dumps([rule_id])
                 audit_sink.enqueue_ask(
                     AuditAsk(
                         trace_id=trace_id,
@@ -373,6 +380,7 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                         latency_ms=latency_total,
                         abuse_risk_score=abuse_risk_score,
                         abuse_flags_json=flags_to_json(abuse_flags),
+                        firewall_rule_ids=firewall_rule_ids_json,
                     )
                 )
                 finish_trace("refused", refusal_reason.kind, 0.2, model=None)

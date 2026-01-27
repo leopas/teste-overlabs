@@ -161,6 +161,7 @@ erDiagram
         varchar answer_hash
         enum answer_source
         varchar refusal_reason
+        text firewall_rule_ids
         boolean cache_hit
     }
     audit_retrieval_chunk {

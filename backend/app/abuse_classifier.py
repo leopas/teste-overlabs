@@ -6,19 +6,8 @@ from typing import Literal
 
 from .config import settings
 
-# Heurísticas para detecção de abuso
-_INJECTION_RE = re.compile(
-    r"(?i)\b("
-    r"ignore (all )?(previous|above) (instructions|messages)|"
-    r"disregard (the )?(system|developer) (prompt|message)|"
-    r"reveal (the )?(system|developer) (prompt|message)|"
-    r"show (me )?(your )?(system|developer) (prompt|message)|"
-    r"jailbreak|"
-    r"BEGIN (SYSTEM|DEVELOPER|PROMPT)|END (SYSTEM|DEVELOPER|PROMPT)|"
-    r"you are chatgpt|as an ai language model"
-    r")\b"
-)
-
+# Heurísticas para detecção de PII/sensível (não coberto pelo Prompt Firewall)
+# Injection/exfiltração agora é detectado pelo Prompt Firewall via scan_for_abuse()
 _SENSITIVE_RE = re.compile(
     r"(?i)\b("
     r"\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11}|"  # CPF
@@ -28,21 +17,17 @@ _SENSITIVE_RE = re.compile(
     r")\b"
 )
 
-_EXFILTRATION_RE = re.compile(
-    r"(?i)\b("
-    r"reveal|show|tell|give|send|"
-    r"system prompt|developer prompt|instructions|"
-    r"ignore instructions|bypass|override"
-    r")\b"
-)
 
-
-def classify(question: str) -> tuple[float, list[str]]:
+def classify(question: str, prompt_firewall=None) -> tuple[float, list[str]]:
     """
     Classifica pergunta quanto ao risco de abuso.
     
+    Agora usa o Prompt Firewall para detecção de injection/exfiltração quando disponível,
+    mantendo apenas detecção de PII/sensível localmente.
+    
     Args:
         question: Pergunta do usuário
+        prompt_firewall: Instância do PromptFirewall (opcional, injetada via app.state)
     
     Returns:
         Tupla (risk_score: float, flags: list[str])
@@ -55,23 +40,19 @@ def classify(question: str) -> tuple[float, list[str]]:
     risk_score = 0.0
     flags: list[str] = []
 
-    question_lower = question.lower()
-
-    # Injection tokens → +0.5
-    if _INJECTION_RE.search(question_lower):
-        risk_score += 0.5
-        flags.append("prompt_injection_attempt")
+    # Usar Prompt Firewall para injection/exfiltração (se disponível e habilitado)
+    if prompt_firewall and prompt_firewall._enabled:
+        fw_score, fw_flags = prompt_firewall.scan_for_abuse(question)
+        risk_score = max(risk_score, fw_score)
+        flags.extend(fw_flags)
 
     # Sensitive patterns (CPF, cartão, token, key) → +0.6
+    # Mantido aqui pois não está no Prompt Firewall (PII é detectado mas não bloqueado)
+    question_lower = question.lower()
     if _SENSITIVE_RE.search(question_lower):
-        risk_score += 0.6
-        flags.append("sensitive_input")
-
-    # Exfiltração → +0.4
-    if _EXFILTRATION_RE.search(question_lower):
-        risk_score += 0.4
-        if "exfiltration_attempt" not in flags:
-            flags.append("exfiltration_attempt")
+        risk_score = max(risk_score, 0.6)
+        if "sensitive_input" not in flags:
+            flags.append("sensitive_input")
 
     # Clamp entre 0.0 e 1.0
     risk_score = max(0.0, min(1.0, risk_score))

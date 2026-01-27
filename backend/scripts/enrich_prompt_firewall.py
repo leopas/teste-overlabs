@@ -21,6 +21,21 @@ if str(_APP_ROOT) not in sys.path:
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+# Carregar .env se existir (para OPENAI_API_KEY)
+_PROJECT_ROOT = _APP_ROOT.parent
+_env_file = _PROJECT_ROOT / ".env"
+if _env_file.is_file():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_file)
+    except ImportError:
+        # Fallback manual se python-dotenv não estiver instalado
+        for line in _env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip())
+
 # Defaults relativos à raiz do projeto (parent de backend)
 _PROJECT_ROOT = _APP_ROOT.parent
 _DEFAULT_RULES = _PROJECT_ROOT / "config" / "prompt_firewall.regex"
@@ -34,14 +49,20 @@ def _ensure_artifacts_dir() -> Path:
     return d
 
 
-_PROMPT_INSTRUCTIONS = """
+# Idiomas suportados pelo Prompt Firewall
+SUPPORTED_LANGUAGES = ["pt", "es", "fr", "de", "it", "en"]
+
+
+_PROMPT_INSTRUCTIONS = f"""
 Proponha novas regras para o Prompt Firewall (regex). Regras bloqueiam perguntas maliciosas antes do retriever/LLM.
 - Alto sinal / baixo FP; evite termos genéricos isolados.
-- Prefira .{0,N} e \\b; evite .*.* e grupos aninhados perigosos (ReDoS).
+- Prefira .{{0,N}} e \\b; evite .*.* e grupos aninhados perigosos (ReDoS).
 - Multi-idioma: normalização lower, sem acentos, collapse spaces; sinônimos por idioma quando fizer sentido.
+- Idiomas suportados: {', '.join(SUPPORTED_LANGUAGES)} (pt=português, es=espanhol, fr=francês, de=alemão, it=italiano, en=inglês).
 - NÃO duplique regras existentes (compare por id e intenção/regex similar).
 - Sempre inclua expected_hits e expected_non_hits (3-5 cada).
 - id deve usar prefixos: inj_, sec_, pii_, payload_.
+- O campo "languages" deve conter apenas códigos de idioma da lista suportada.
 """
 
 _JSON_SCHEMA = {
@@ -169,13 +190,20 @@ def cmd_propose(args: argparse.Namespace) -> int:
         except Exception as e:
             print("propose: OpenAI error", e)
     existing = lib.parse_firewall_rules(rules_path)
-    proposal_rules = [lib.ProposalRule(
-        id=p["id"], regex=p["regex"], languages=p.get("languages") or [],
-        category=p.get("category") or "injection", rationale=p.get("rationale") or "",
-        risk_of_fp=p.get("risk_of_fp") or "low",
-        expected_hits=p.get("expected_hits") or [], expected_non_hits=p.get("expected_non_hits") or [],
-        perf_notes=p.get("perf_notes") or "",
-    ) for p in proposals_raw]
+    # Filtrar idiomas não suportados
+    proposal_rules = []
+    for p in proposals_raw:
+        languages = [lang for lang in (p.get("languages") or []) if lang in SUPPORTED_LANGUAGES]
+        if not languages:
+            # Se nenhum idioma suportado, usar pt como padrão
+            languages = ["pt"]
+        proposal_rules.append(lib.ProposalRule(
+            id=p["id"], regex=p["regex"], languages=languages,
+            category=p.get("category") or "injection", rationale=p.get("rationale") or "",
+            risk_of_fp=p.get("risk_of_fp") or "low",
+            expected_hits=p.get("expected_hits") or [], expected_non_hits=p.get("expected_non_hits") or [],
+            perf_notes=p.get("perf_notes") or "",
+        ))
     deduped = lib.dedup_proposals(proposal_rules, existing)
     proposals_out = [
         {

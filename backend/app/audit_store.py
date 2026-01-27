@@ -52,6 +52,7 @@ class AuditAsk:
     latency_ms: int | None = None
     abuse_risk_score: float | None = None
     abuse_flags_json: str | None = None
+    firewall_rule_ids: str | None = None  # JSON array de rule_ids do Prompt Firewall (ex: '["inj_ignore_previous_instructions"]')
 
 
 @dataclass
@@ -346,8 +347,8 @@ class MySQLAuditSink:
                 INSERT INTO audit_ask
                 (trace_id, request_id, session_id, user_id, question_hash, answer_hash, answer_source,
                  confidence, refusal_reason, cache_key, cache_hit, llm_model, latency_ms,
-                 abuse_risk_score, abuse_flags_json, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP())
+                 abuse_risk_score, abuse_flags_json, firewall_rule_ids, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP())
                 ON DUPLICATE KEY UPDATE
                     request_id = VALUES(request_id),
                     session_id = VALUES(session_id),
@@ -362,7 +363,8 @@ class MySQLAuditSink:
                     llm_model = VALUES(llm_model),
                     latency_ms = VALUES(latency_ms),
                     abuse_risk_score = VALUES(abuse_risk_score),
-                    abuse_flags_json = VALUES(abuse_flags_json)
+                    abuse_flags_json = VALUES(abuse_flags_json),
+                    firewall_rule_ids = VALUES(firewall_rule_ids)
                 """,
                 (
                     ask.trace_id,
@@ -380,6 +382,7 @@ class MySQLAuditSink:
                     ask.latency_ms,
                     ask.abuse_risk_score,
                     ask.abuse_flags_json,
+                    ask.firewall_rule_ids,
                 ),
             )
         finally:

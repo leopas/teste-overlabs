@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS audit_ask (
   latency_ms        INT NULL,
   abuse_risk_score  FLOAT NULL,
   abuse_flags_json  TEXT NULL,                 -- JSON array de strings
+  firewall_rule_ids TEXT NULL,                  -- JSON array de rule_ids do Prompt Firewall que bloquearam (ex: ["inj_ignore_previous_instructions"])
   created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_session_created (session_id, created_at),
   KEY idx_user_created (user_id, created_at),
@@ -81,3 +82,8 @@ CREATE TABLE IF NOT EXISTS audit_vector_fingerprint (
   created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_vector_ask FOREIGN KEY (trace_id) REFERENCES audit_ask(trace_id)
 );
+
+-- Migração: adicionar firewall_rule_ids em schemas existentes
+-- ALTER TABLE audit_ask 
+-- ADD COLUMN firewall_rule_ids TEXT NULL 
+-- COMMENT 'JSON array de rule_ids do Prompt Firewall que bloquearam (ex: ["inj_ignore_previous_instructions"])';

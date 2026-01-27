@@ -93,6 +93,7 @@ Apenas **nomes**; não usar valores reais em docs.
 - `AUDIT_LOG_ENABLED`, `AUDIT_LOG_INCLUDE_TEXT`, `AUDIT_LOG_RAW_MODE`, `AUDIT_LOG_RAW_MAX_CHARS`, `AUDIT_LOG_REDACT`
 - `AUDIT_ENC_KEY_B64`, `AUDIT_ENC_AAD_MODE`
 - `ABUSE_CLASSIFIER_ENABLED`, `ABUSE_RISK_THRESHOLD`
+- **Nota**: O `abuse_classifier` agora usa o Prompt Firewall (`scan_for_abuse()`) para calcular `risk_score` e `flags` quando `PROMPT_FIREWALL_ENABLED=1`, mantendo apenas detecção de PII/sensível localmente. Ver [prompt_firewall.md](prompt_firewall.md#classificação-de-risco-scan_for_abuse).
 
 ---
 
@@ -110,9 +111,9 @@ Apenas **nomes**; não usar valores reais em docs.
 | Vetor | Mitigação |
 |-------|------------|
 | **Prompt injection** | Guardrails (regex) + Prompt Firewall (regex). |
-| **Exfiltração** | Firewall, guardrails, recusa sem evidência; abuse classifier + raw opcional para análise. |
+| **Exfiltração** | Firewall, guardrails, recusa sem evidência; abuse classifier (usa Prompt Firewall via `scan_for_abuse()`) + raw opcional para análise. |
 | **Vazamento de PII** | Guardrails na pergunta; ingestão sem CPF/funcionários; redaction em audit; hashes em vez de texto quando possível. |
-| **Abuso / volume** | Rate limit; abuse classifier; auditoria. |
+| **Abuso / volume** | Rate limit; abuse classifier (integra Prompt Firewall para cálculo de risk_score); auditoria. |
 | **ReDoS (regex)** | Regras focadas; métricas `firewall_check_duration`; enricher com validação de performance. |
 | **Cache poisoning** | Cache key = SHA256 da pergunta normalizada; sem influência direta do cliente no valor cacheado. |
 

@@ -83,7 +83,7 @@ Ordem executada no código:
     - **Threshold** de confidence (&lt; 0,65 → REFUSAL).  
     - **Cross-check** (`cross_check_ok`): 2+ fontes distintas **ou** 1 fonte POLICY/MANUAL com trust ≥ 0,85; sem conflito.  
     - **Pós-validação** (`post_validate_answer`): números citados na resposta devem existir nos trechos de evidência; caso contrário → REFUSAL.
-12. **Resposta** 200; `X-Answer-Source` = CACHE | LLM | REFUSAL. Audit (session, message, ask; chunks quando há retrieval).
+12. **Resposta** 200; `X-Answer-Source` = CACHE | LLM | REFUSAL. Audit (session, message, ask; chunks quando há retrieval). **Classificação de abuso** (risk_score, flags) calculada via Prompt Firewall `scan_for_abuse()` quando habilitado + detecção local de PII/sensível.
 
 Diagrama de sequência: [diagrams.md#c](diagrams.md#c-sequência-do-ask-detalhado).
 

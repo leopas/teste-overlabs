@@ -144,7 +144,8 @@ Isso permite que clientes tratem sucesso/recusa apenas pelo corpo e pelos header
 |--------|------------------|
 | `app.main` | FastAPI, `/ask`, guardrails, cache, retrieval, LLM, quality, audit, headers |
 | `app.security` | `normalize_question`, `detect_prompt_injection`, `detect_sensitive_request` |
-| `app.prompt_firewall` | Regras regex, normalização, `check()`, métricas |
+| `app.prompt_firewall` | Regras regex, normalização, `check()` (bloqueio), `scan_for_abuse()` (classificação de risco), métricas |
+| `app.abuse_classifier` | `classify()` (integra Prompt Firewall quando habilitado), detecção local de PII/sensível, `should_save_raw()`, `flags_to_json()` |
 | `app.cache` | Redis: `cache_key_for_question` (SHA256), `get_json`/`set_json`, rate limit |
 | `app.retrieval` | Embeddings, Qdrant, `select_evidence`, re-rank |
 | `app.quality` | Conflito, confidence, threshold, cross-check, post-validation |

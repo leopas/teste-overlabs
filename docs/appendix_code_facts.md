@@ -70,7 +70,8 @@ Uma página de referência com **fatos confirmados** no código atual. Use para 
 
 - Audit: `audit_store.py`; sink MySQL ou noop. Tabelas: `audit_session`, `audit_message`, `audit_ask`, `audit_retrieval_chunk`, `audit_vector_fingerprint` (opcional). Schema em `docs/db_audit_schema.sql`.
 - Pipeline trace: `trace_store.py`; opcional (MySQL). Schema em `docs/db_trace_schema.sql`.
-- **`rule_id` do firewall:** não persistido no schema. Só em logs (`firewall_block`, `guardrail_block`). Correlacionar por `trace_id`.
+- **`rule_id` do firewall:** persistido em `audit_ask.firewall_rule_ids` (JSON array, ex: `'["inj_ignore_previous_instructions"]'`) quando há bloqueio. Também em logs (`firewall_block`, `guardrail_block`).
+- **Classificação de abuso:** `abuse_risk_score` (FLOAT 0.0-1.0) e `abuse_flags_json` (JSON array) calculados via Prompt Firewall `scan_for_abuse()` quando habilitado + detecção local de PII/sensível. Metodologia: [prompt_firewall.md#classificação-de-risco-scan_for_abuse](prompt_firewall.md#classificação-de-risco-scan_for_abuse).
 
 ---
 
@@ -86,7 +87,8 @@ Uma página de referência com **fatos confirmados** no código atual. Use para 
 | Retrieval | `backend/app/retrieval.py` | Embeddings (FastEmbed ou OpenAI), Qdrant, `select_evidence`, re-rank. |
 | Observability | `backend/app/observability.py` | Middleware `X-Request-ID` / `X-Trace-ID`, structlog, OTel. |
 | Audit | `backend/app/audit_store.py` | `AuditSession`, `AuditMessage`, `AuditAsk`, `AuditChunk`; MySQL ou noop. |
-| Prompt firewall | `backend/app/prompt_firewall.py` | `check()`, regras regex, métricas. |
+| Prompt firewall | `backend/app/prompt_firewall.py` | `check()` (bloqueio), `scan_for_abuse()` (classificação de risco), regras regex, métricas. |
+| Abuse classifier | `backend/app/abuse_classifier.py` | `classify()` (integra Prompt Firewall quando habilitado), detecção local de PII/sensível, `should_save_raw()`, `flags_to_json()`. |
 
 ---
 
