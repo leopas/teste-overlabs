@@ -20,7 +20,10 @@ COPY backend/app /app/app
 COPY backend/scripts /app/scripts
 COPY docs /app/docs
 COPY config /app/config
-COPY certs /app/certs
+# Criar diretório certs (será populado se necessário)
+RUN mkdir -p /app/certs
+# Copiar certs (pode estar vazio - não falha)
+COPY certs*.* /app/certs/ 2>/dev/null || echo "No certs to copy"
 
 EXPOSE 8000
 

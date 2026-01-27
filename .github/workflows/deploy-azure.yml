@@ -88,6 +88,11 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ github.sha }},enable=true
       
+      - name: Ensure certs directory exists
+        run: |
+          mkdir -p certs
+          touch certs/.gitkeep
+      
       - name: Build and push
         id: build
         uses: docker/build-push-action@v5
