@@ -13,6 +13,10 @@ concurrency:
   group: deploy-azure-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  id-token: write
+  contents: read
+
 env:
   ACR_NAME: acrchoperia
   IMAGE_NAME: choperia-api
