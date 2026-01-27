@@ -116,7 +116,6 @@ jobs:
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
           ignore-unfixed: true
-          skip-version-check: true
       
       - name: Setup Python for security scans
         uses: actions/setup-python@v5
@@ -129,7 +128,7 @@ jobs:
           pip install pip-audit
           echo "🔍 Scanning Python dependencies for vulnerabilities..."
           pip-audit --desc --format json -o pip-audit-report.json || true
-          pip-audit --desc --format text || true
+          pip-audit --desc || true
       
       - name: Scan Python code with Bandit
         continue-on-error: true
@@ -141,15 +140,11 @@ jobs:
       
       - name: Scan code with Semgrep
         continue-on-error: true
-        uses: returntocorp/semgrep-action@v1
-        with:
-          config: >-
-            p/security-audit
-            p/python
-            p/owasp-top-ten
-          generateSarif: "1"
-          generateGitHubSARIF: "1"
-          publishSarif: "false"
+        run: |
+          pip install semgrep
+          echo "🔍 Scanning code with Semgrep..."
+          semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" --json -o semgrep-results.json || true
+          semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" || true
 
   deploy-staging:
     name: Deploy to Staging
@@ -187,7 +182,24 @@ jobs:
           echo "📋 Compose file gerado:"
           cat docker-compose.deploy.yml
       
-      - name: Deploy to staging slot
+      - name: Check if staging slot exists
+        id: check_slot
+        run: |
+          SLOT_EXISTS=$(az webapp deployment slot list \
+            --name ${{ steps.state.outputs.app_name }} \
+            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --query "[?name=='staging'].name" -o tsv 2>/dev/null || echo "")
+          if [ -z "$SLOT_EXISTS" ]; then
+            echo "slot_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️  Staging slot não existe (App Service Plan Basic não suporta slots)"
+            echo "   Fazendo deploy direto na produção..."
+          else
+            echo "slot_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Staging slot encontrado"
+          fi
+      
+      - name: Deploy to staging slot (if exists)
+        if: steps.check_slot.outputs.slot_exists == 'true'
         run: |
           az webapp config container set \
             --name ${{ steps.state.outputs.app_name }} \
@@ -196,27 +208,75 @@ jobs:
             --multicontainer-config-type compose \
             --multicontainer-config-file docker-compose.deploy.yml
       
-      - name: Restart staging slot
+      - name: Deploy directly to production (no slot)
+        if: steps.check_slot.outputs.slot_exists == 'false'
+        run: |
+          az webapp config container set \
+            --name ${{ steps.state.outputs.app_name }} \
+            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --multicontainer-config-type compose \
+            --multicontainer-config-file docker-compose.deploy.yml
+      
+      - name: Restart staging slot (if exists)
+        if: steps.check_slot.outputs.slot_exists == 'true'
         run: |
           az webapp restart \
             --name ${{ steps.state.outputs.app_name }} \
             --resource-group ${{ steps.state.outputs.resource_group }} \
             --slot staging
+      
+      - name: Restart production (no slot)
+        if: steps.check_slot.outputs.slot_exists == 'false'
+        run: |
+          az webapp restart \
+            --name ${{ steps.state.outputs.app_name }} \
+            --resource-group ${{ steps.state.outputs.resource_group }}
 
   smoke-staging:
     name: Smoke Test Staging
     runs-on: ubuntu-latest
     needs: deploy-staging
+    outputs:
+      slot_exists: ${{ steps.check_slot.outputs.slot_exists }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       
-      - name: Load deploy state
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      
+      - name: Load deploy state and check slot
+        id: check_slot
+        run: |
+          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
+          SLOT_EXISTS=$(az webapp deployment slot list \
+            --name $APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --query "[?name=='staging'].name" -o tsv 2>/dev/null || echo "")
+          if [ -z "$SLOT_EXISTS" ]; then
+            TEST_URL="https://${APP_NAME}.azurewebsites.net"
+            echo "slot_exists=false" >> $GITHUB_OUTPUT
+          else
+            TEST_URL="https://${APP_NAME}-staging.azurewebsites.net"
+            echo "slot_exists=true" >> $GITHUB_OUTPUT
+          fi
+          echo "test_url=$TEST_URL" >> $GITHUB_OUTPUT
+      
+      - name: Load test URL
         id: state
         run: |
           APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
-          STAGING_URL="https://${APP_NAME}-staging.azurewebsites.net"
-          echo "staging_url=$STAGING_URL" >> $GITHUB_OUTPUT
+          if [ "${{ steps.check_slot.outputs.slot_exists }}" == "true" ]; then
+            TEST_URL="https://${APP_NAME}-staging.azurewebsites.net"
+          else
+            TEST_URL="https://${APP_NAME}.azurewebsites.net"
+          fi
+          echo "test_url=$TEST_URL" >> $GITHUB_OUTPUT
       
       - name: Wait for deployment
         run: |
@@ -226,12 +286,13 @@ jobs:
       - name: Run smoke test
         run: |
           chmod +x infra/smoke_test.sh
-          infra/smoke_test.sh ${{ steps.state.outputs.staging_url }} 30 5 2
+          infra/smoke_test.sh ${{ steps.state.outputs.test_url }} 30 5 2
 
   swap:
     name: Swap Staging to Production
     runs-on: ubuntu-latest
     needs: smoke-staging
+    if: needs.smoke-staging.outputs.slot_exists == 'true'
     environment:
       name: production
     steps:
@@ -266,7 +327,10 @@ jobs:
   smoke-prod:
     name: Smoke Test Production
     runs-on: ubuntu-latest
-    needs: swap
+    needs: 
+      - swap
+      - smoke-staging
+    if: always() && (needs.swap.result == 'success' || needs.swap.result == 'skipped')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -278,9 +342,9 @@ jobs:
           PROD_URL="https://${APP_NAME}.azurewebsites.net"
           echo "prod_url=$PROD_URL" >> $GITHUB_OUTPUT
       
-      - name: Wait for swap
+      - name: Wait for deployment/swap
         run: |
-          echo "⏳ Aguardando 30s para swap estabilizar..."
+          echo "⏳ Aguardando 30s para deployment estabilizar..."
           sleep 30
       
       - name: Run smoke test
@@ -289,9 +353,13 @@ jobs:
           infra/smoke_test.sh ${{ steps.state.outputs.prod_url }} 30 5 2
       
       - name: Deployment summary
+        env:
+          PROD_URL: ${{ steps.state.outputs.prod_url }}
+          IMAGE_TAG: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           echo "## ✅ Deploy Concluído" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**URL de Produção:** ${{ steps.state.outputs.prod_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Tag:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.event.head_commit.message }}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL de Produção:** $PROD_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** $COMMIT_MSG" >> $GITHUB_STEP_SUMMARY

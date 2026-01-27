@@ -280,7 +280,86 @@ if (-not $TENANT_ID) {
     exit 1
 }
 
+# Verificar e criar federated credential para environment staging
+Write-Host "[INFO] Verificando federated credential para environment staging..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
+$stagingEnvCredExists = az ad app federated-credential list --id $APP_ID --query "[?name=='github-actions-staging-env']" -o tsv 2>$null
+$ErrorActionPreference = "Stop"
+
+if ($stagingEnvCredExists) {
+    Write-Host "[OK] Federated credential para staging environment já existe (reutilizando)" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Criando federated credential para staging environment..." -ForegroundColor Yellow
+    $stagingEnvParams = @{
+        name = "github-actions-staging-env"
+        issuer = "https://token.actions.githubusercontent.com"
+        subject = "repo:$GitHubOrg/$GitHubRepo`:environment:staging"
+        audiences = @("api://AzureADTokenExchange")
+    }
+    
+    $tempJsonFile = [System.IO.Path]::GetTempFileName()
+    $stagingEnvParams | ConvertTo-Json -Compress | Out-File -FilePath $tempJsonFile -Encoding utf8 -NoNewline
+
+    $ErrorActionPreference = "Continue"
+    $stagingEnvError = az ad app federated-credential create `
+      --id $APP_ID `
+      --parameters "@$tempJsonFile" 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+    
+    Remove-Item $tempJsonFile -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Federated credential para staging environment criada" -ForegroundColor Green
+    } else {
+        if ($stagingEnvError -match "already exists" -or $stagingEnvError -match "Conflict") {
+            Write-Host "[OK] Federated credential para staging environment já existe (reutilizando)" -ForegroundColor Green
+        } else {
+            Write-Host "[AVISO] Erro ao criar federated credential para staging environment" -ForegroundColor Yellow
+            Write-Host "   Detalhes: $($stagingEnvError.Trim())" -ForegroundColor Gray
+        }
+    }
+}
 Write-Host ""
+
+# Verificar e criar federated credential para environment production
+Write-Host "[INFO] Verificando federated credential para environment production..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
+$prodEnvCredExists = az ad app federated-credential list --id $APP_ID --query "[?name=='github-actions-production-env']" -o tsv 2>$null
+$ErrorActionPreference = "Stop"
+
+if ($prodEnvCredExists) {
+    Write-Host "[OK] Federated credential para production environment já existe (reutilizando)" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Criando federated credential para production environment..." -ForegroundColor Yellow
+    $prodEnvParams = @{
+        name = "github-actions-production-env"
+        issuer = "https://token.actions.githubusercontent.com"
+        subject = "repo:$GitHubOrg/$GitHubRepo`:environment:production"
+        audiences = @("api://AzureADTokenExchange")
+    }
+    
+    $tempJsonFile = [System.IO.Path]::GetTempFileName()
+    $prodEnvParams | ConvertTo-Json -Compress | Out-File -FilePath $tempJsonFile -Encoding utf8 -NoNewline
+
+    $ErrorActionPreference = "Continue"
+    $prodEnvError = az ad app federated-credential create `
+      --id $APP_ID `
+      --parameters "@$tempJsonFile" 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+    
+    Remove-Item $tempJsonFile -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Federated credential para production environment criada" -ForegroundColor Green
+    } else {
+        if ($prodEnvError -match "already exists" -or $prodEnvError -match "Conflict") {
+            Write-Host "[OK] Federated credential para production environment já existe (reutilizando)" -ForegroundColor Green
+        } else {
+            Write-Host "[AVISO] Erro ao criar federated credential para production environment" -ForegroundColor Yellow
+            Write-Host "   Detalhes: $($prodEnvError.Trim())" -ForegroundColor Gray
+        }
+    }
+}
+Write-Host ""
+
 Write-Host "=== Configuração Concluída! ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Agora configure os seguintes secrets no GitHub:" -ForegroundColor Cyan

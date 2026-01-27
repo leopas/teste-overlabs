@@ -199,11 +199,19 @@ Write-Host "[INFO] Verificando App Service Plan..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
 $null = az appservice plan show --name $AppServicePlan --resource-group $ResourceGroup 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[INFO] Criando App Service Plan..." -ForegroundColor Yellow
-    az appservice plan create --name $AppServicePlan --resource-group $ResourceGroup --location $Location --is-linux --sku B1 | Out-Null
-    Write-Host "[OK] App Service Plan criado" -ForegroundColor Green
+    Write-Host "[INFO] Criando App Service Plan (Standard S1 para suportar slots)..." -ForegroundColor Yellow
+    az appservice plan create --name $AppServicePlan --resource-group $ResourceGroup --location $Location --is-linux --sku S1 | Out-Null
+    Write-Host "[OK] App Service Plan criado (Standard S1)" -ForegroundColor Green
 } else {
     Write-Host "[OK] App Service Plan já existe" -ForegroundColor Green
+    # Verificar se é Basic e sugerir upgrade
+    $ErrorActionPreference = "Continue"
+    $currentSku = az appservice plan show --name $AppServicePlan --resource-group $ResourceGroup --query "sku.tier" -o tsv 2>&1
+    $ErrorActionPreference = "Stop"
+    if ($currentSku -eq "Basic") {
+        Write-Host "[AVISO] Plano atual é Basic (não suporta slots). Para usar slots, faça upgrade:" -ForegroundColor Yellow
+        Write-Host "  .\infra\upgrade_to_standard.ps1 -AppServicePlanName $AppServicePlan -ResourceGroup $ResourceGroup" -ForegroundColor Gray
+    }
 }
 Write-Host ""
 

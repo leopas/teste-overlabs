@@ -341,7 +341,7 @@ python infra/bootstrap_azure.py --env .env --stage prod --location brazilsouth
 1. **Resource Group**: `rg-overlabs-prod`
 2. **ACR**: `acrchoperia` (reutiliza se existir)
 3. **Key Vault**: `kv-overlabs-prod-XXX` (suffix random)
-4. **App Service Plan**: `asp-overlabs-prod-XXX` (Linux, B1)
+4. **App Service Plan**: `asp-overlabs-prod-XXX` (Linux, Standard S1 - suporta slots)
 5. **Web App**: `app-overlabs-prod-XXX` (Linux, multi-container)
 6. **Storage Account**: `saoverlabsprodXXX` (Azure Files)
 7. **File Share**: `qdrant-storage`
@@ -374,6 +374,38 @@ Após o bootstrap, o arquivo `.azure/deploy_state.json` é criado com metadados 
 ```
 
 **IMPORTANTE**: Este arquivo é gitignored. Não commite!
+
+### Upgrade do App Service Plan para Standard
+
+O bootstrap agora cria planos com **Standard S1** por padrão (suporta slots). Se você já tem um plano Basic e quer fazer upgrade:
+
+**Script Automatizado (Recomendado):**
+
+```powershell
+# Obter nomes do deploy_state.json
+$state = Get-Content .azure/deploy_state.json | ConvertFrom-Json
+.\infra\upgrade_to_standard.ps1 -AppServicePlanName $state.appServicePlanName -ResourceGroup $state.resourceGroup
+```
+
+O script irá:
+1. Verificar o SKU atual
+2. Fazer upgrade de Basic (B1) para Standard (S1)
+3. Criar o staging slot automaticamente (se ainda não existir)
+
+**Manual:**
+
+```powershell
+# 1. Fazer upgrade
+az appservice plan update --name asp-overlabs-prod-XXX --resource-group rg-overlabs-prod --sku S1
+
+# 2. Criar staging slot
+az webapp deployment slot create --name app-overlabs-prod-XXX --resource-group rg-overlabs-prod --slot staging --configuration-source app-overlabs-prod-XXX
+```
+
+**Nota**: O upgrade aumenta o custo mensal. Standard S1 é mais caro que Basic B1, mas permite:
+- Deployment slots (blue-green deployment)
+- Auto-scaling
+- Melhor performance
 
 ## Como Funciona a Pipeline
 
@@ -640,6 +672,88 @@ az role assignment create \
 1. Verificar se staging slot existe
 2. Verificar se staging está saudável (smoke test passou)
 3. Verificar se não há conflitos de configuração entre slots
+
+### Staging slot não existe (App Service Plan Basic)
+
+**Problema**: `The Resource 'Microsoft.Web/sites/.../slots/staging' under resource group '...' was not found.`
+
+**Causa**: App Service Plan **B1 (Basic)** não suporta deployment slots. Apenas planos **Standard** e superiores suportam slots.
+
+**Solução - Upgrade para Standard (Recomendado)**:
+
+Use o script automatizado para fazer upgrade:
+
+```powershell
+# Obter nomes do deploy_state.json
+$state = Get-Content .azure/deploy_state.json | ConvertFrom-Json
+.\infra\upgrade_to_standard.ps1 -AppServicePlanName $state.appServicePlanName -ResourceGroup $state.resourceGroup
+```
+
+O script irá:
+1. Verificar o SKU atual
+2. Fazer upgrade de Basic (B1) para Standard (S1)
+3. Criar o staging slot automaticamente (se ainda não existir)
+
+**Alternativa Manual**:
+
+```powershell
+# 1. Fazer upgrade do plano
+az appservice plan update --name asp-overlabs-prod-XXX --resource-group rg-overlabs-prod --sku S1
+
+# 2. Criar staging slot
+az webapp deployment slot create --name app-overlabs-prod-XXX --resource-group rg-overlabs-prod --slot staging --configuration-source app-overlabs-prod-XXX
+```
+
+**Nota**: 
+- O workflow foi ajustado para detectar automaticamente se o slot existe. Se não existir, faz deploy direto na produção.
+- Com plano Basic, não há staging slot, então o deploy é feito diretamente na produção. Isso é menos seguro, mas funcional.
+- **Para ambientes de produção, recomenda-se fortemente upgrade para Standard** para ter slots e blue-green deployment.
+- O bootstrap script agora cria novos planos com **Standard S1** por padrão.
+
+### Erro no pip-audit: formato inválido
+
+**Problema**: `pip-audit: error: argument -f/--format: invalid OutputFormatChoice value: 'text'`
+
+**Causa**: O formato `text` não é válido na versão atual do pip-audit.
+
+**Solução**: O workflow foi corrigido para remover o parâmetro `--format text`. O pip-audit agora usa o formato padrão (table).
+
+### Warning no Trivy: parâmetro não suportado
+
+**Problema**: `Unexpected input(s) 'skip-version-check'`
+
+**Causa**: A versão atual da action `aquasecurity/trivy-action@master` não suporta mais o parâmetro `skip-version-check`.
+
+**Solução**: O parâmetro foi removido do workflow. O Trivy continuará funcionando normalmente, apenas mostrará avisos de versão se houver atualizações disponíveis.
+
+### Warning no Semgrep: parâmetros inválidos
+
+**Problema**: `Unexpected input(s) 'generateSarif', 'generateGitHubSARIF', 'publishSarif'`
+
+**Causa**: A action `returntocorp/semgrep-action@v1` não aceita esses parâmetros na sintaxe atual.
+
+**Solução**: O workflow foi ajustado para executar Semgrep via CLI diretamente, permitindo maior controle sobre a configuração e saída.
+
+### Vulnerabilidade de Shell Injection no Workflow
+
+**Problema**: Semgrep detectou possível shell injection no workflow ao usar `${{ github.event.head_commit.message }}` diretamente no shell.
+
+**Causa**: Valores do contexto GitHub podem conter caracteres especiais que podem ser interpretados pelo shell.
+
+**Solução**: O workflow foi corrigido para usar variáveis de ambiente intermediárias (`env:`) antes de usar valores do contexto GitHub em comandos shell. Isso previne injeção de código malicioso.
+
+**Exemplo de correção**:
+```yaml
+# ❌ ANTES (vulnerável)
+run: |
+  echo "Commit: ${{ github.event.head_commit.message }}" >> $GITHUB_STEP_SUMMARY
+
+# ✅ DEPOIS (seguro)
+env:
+  COMMIT_MSG: ${{ github.event.head_commit.message }}
+run: |
+  echo "Commit: $COMMIT_MSG" >> $GITHUB_STEP_SUMMARY
+```
 
 ## Próximos Passos
 
