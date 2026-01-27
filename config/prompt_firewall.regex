@@ -1,0 +1,73 @@
+# Prompt Firewall – regras regex (uma por linha).
+# Linhas vazias e comentários (#) são ignorados.
+#
+# Formato:
+#   nome::REGEX   → id = nome
+#   REGEX         → id = rule_0001, rule_0002, ...
+#
+# Observação:
+# - Use normalização antes do match: lower + remove acentos + colapsa whitespace.
+# - Prefira regras de alto sinal/baixo falso-positivo.
+
+# =============================================================================
+# A) PROMPT INJECTION / BYPASS (MULTI-IDIOMA)
+# =============================================================================
+
+# "Ignore previous instructions / disregard rules" (EN/PT/ES/FR/DE/IT)
+inj_ignore_instructions::(?is)\b(ignore|disregard|bypass|override|forget)\b.{0,40}\b(previous|prior|earlier)\b.{0,40}\b(instructions|rules|policy|policies)\b
+inj_ignorar_instrucoes::(?is)\b(ignorar|desconsiderar|burlar|contornar|sobrescrever|esquecer)\b.{0,60}\b(instru(c|ç)(o|õ)es|regras|pol(i|í)tica(s)?)\b
+inj_ignora_instrucciones::(?is)\b(ignora|ignore|omitir|pasar\s+por\s+alto|saltarse|eludir)\b.{0,60}\b(instrucciones|reglas|pol(i|í)tica(s)?)\b
+inj_ignorer_instructions::(?is)\b(ignorer|oublie(r)?|contourner|bypasser)\b.{0,60}\b(instructions|r(e|é)gles|politique(s)?)\b
+inj_ignori_anweisungen::(?is)\b(ignoriere|umgehe|uebergehe|überspringe|vergiss)\b.{0,60}\b(anweisungen|regeln|richtlinie(n)?)\b
+inj_ignora_istruzioni::(?is)\b(ignora|dimentica|aggira|bypassa)\b.{0,60}\b(istruzioni|regole|politica(he)?)\b
+
+# "You are now / act as / pretend" + "no restrictions"
+inj_act_as_unrestricted::(?is)\b(you\s+are\s+now|act\s+as|pretend\s+to\s+be)\b.{0,80}\b(without\s+restrictions|no\s+rules|unfiltered)\b
+inj_finjo_sem_restricoes::(?is)\b(finja\s+que|assuma\s+o\s+papel|fa(c|ç)a\s+de\s+conta)\b.{0,80}\b(sem\s+restri(c|ç)(o|õ)es|sem\s+regras|sem\s+filtros)\b
+inj_haz_de_cuenta_sin_restricciones::(?is)\b(finge\s+que|act(u|ú)a\s+como|haz\s+de\s+cuenta)\b.{0,80}\b(sin\s+restricciones|sin\s+reglas|sin\s+filtros)\b
+
+# "Jailbreak / DAN / do anything now"
+inj_jailbreak_dan::(?is)\b(jailbreak|dan\b|do\s+anything\s+now|developer\s+mode|modo\s+desarrollador|modo\s+desenvolvedor|unfiltered|sem\s+filtros|sin\s+filtros)\b
+
+# =============================================================================
+# B) EXFILTRAÇÃO DE PROMPT / POLÍTICAS / MENSAGENS INTERNAS (MULTI-IDIOMA)
+# =============================================================================
+
+# "Reveal/show/print system prompt / developer message"
+inj_reveal_system_prompt::(?is)\b(reveal|show|print|dump|leak|expose)\b.{0,60}\b(system\s+prompt|developer\s+message|hidden\s+instructions|internal\s+instructions)\b
+inj_revelar_prompt_sistema_pt::(?is)\b(revele|mostre|imprima|vaze|exponha)\b.{0,60}\b(prompt\s+do\s+sistema|mensagem\s+do\s+desenvolvedor|instru(c|ç)(o|õ)es\s+ocultas|instru(c|ç)(o|õ)es\s+internas)\b
+inj_revelar_prompt_sistema_es::(?is)\b(revela|mu(e|é)stra|imprime|filtra|expone)\b.{0,60}\b(prompt\s+del\s+sistema|mensaje\s+del\s+desarrollador|instrucciones\s+ocultas|instrucciones\s+internas)\b
+inj_reveler_prompt_systeme_fr::(?is)\b(r(e|é)v(e|é)ler|montrer|imprimer|divulguer)\b.{0,60}\b(prompt\s+du\s+syst(e|è)me|message\s+du\s+d(e|é)veloppeur|instructions\s+cach(e|é)es)\b
+inj_zeige_system_prompt_de::(?is)\b(zeige|drucke|gib\s+aus|enth(u|ü)lle|leake)\b.{0,60}\b(system\s*prompt|entwicklernachricht|versteckte\s+anweisungen|interne\s+anweisungen)\b
+inj_mostra_prompt_sistema_it::(?is)\b(rivela|mostra|stampa|divulga)\b.{0,60}\b(prompt\s+di\s+sistema|messaggio\s+sviluppatore|istruzioni\s+nascoste|istruzioni\s+interne)\b
+
+# "List all documents / dump all chunks"
+inj_dump_all_docs_en::(?is)\b(list|dump|export|show)\b.{0,40}\b(all\s+documents|all\s+chunks|entire\s+knowledge\s+base|full\s+context)\b
+inj_listar_todos_docs_pt::(?is)\b(lista(r)?|exporte|mostre|despeje)\b.{0,50}\b(todos\s+os\s+documentos|todos\s+os\s+chunks|base\s+de\s+conhecimento\s+inteira|contexto\s+completo)\b
+inj_listar_todos_docs_es::(?is)\b(lista(r)?|exporta|muestra|vuelca)\b.{0,50}\b(todos\s+los\s+documentos|todos\s+los\s+chunks|base\s+de\s+conocimiento\s+entera|contexto\s+completo)\b
+
+# =============================================================================
+# C) SEGREDOS / CREDENCIAIS (MULTI-IDIOMA)
+# =============================================================================
+
+# API keys / tokens / secrets
+sec_tokens_generic::(?is)\b(api\s*key|access\s*token|refresh\s*token|token|secret|senha|password|contrase(n|ñ)a|mot\s+de\s+passe|passwort|chiave\s+segreta)\b
+sec_private_key_pem::(?is)\b(BEGIN\s+(RSA|EC|OPENSSH)\s+PRIVATE\s+KEY|chave\s+privada|private\s+key|clave\s+privada|cl(e|é)\s+priv(e|é)e)\b
+sec_cloud_creds::(?is)\b(aws_secret_access_key|aws_access_key_id|azure\s*(client\s*secret|tenant|subscription)|gcp\s*(service\s*account|private_key))\b
+sec_conn_strings::(?is)\b(connection\s*string|jdbc:|mongodb\+srv:|postgres(?:ql)?:\/\/|mysql:\/\/|redis:\/\/)\b
+
+# =============================================================================
+# D) PII / LGPD (Brasil + genérico)
+# =============================================================================
+
+pii_cpf::\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b
+pii_cnpj::\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b
+pii_credit_card::\b(?:\d[ -]*?){13,19}\b
+pii_email::(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b
+pii_phone_br::(?i)\b(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[-\s]?\d{4}\b
+
+# =============================================================================
+# E) PAYLOAD SUSPEITO (BLOB)
+# =============================================================================
+
+payload_base64_blob::(?is)\b[A-Za-z0-9+/]{400,}={0,2}\b

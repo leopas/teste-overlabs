@@ -36,6 +36,7 @@ class RefusalReason(BaseModel):
         "input_invalid",
         "guardrail_injection",
         "guardrail_sensitive",
+        "guardrail_firewall",
         "rate_limited",
         "cache_error",
         "qdrant_unavailable",

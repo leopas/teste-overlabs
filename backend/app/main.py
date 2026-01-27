@@ -40,6 +40,7 @@ from .quality import (
     post_validate_answer,
     quality_threshold,
 )
+from .prompt_firewall import build_prompt_firewall
 from .redaction import normalize_text as redact_normalize, redact_text, sha256_text
 from .retrieval import EmbeddingsProvider, QdrantStore, excerpt, excerpt_for_question, get_embeddings_provider, select_evidence
 from .schemas import AskRequest, AskResponse, RefusalReason, SourceItem
@@ -108,6 +109,7 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
     app.state.llm = overrides.get("llm") or get_llm(settings)
     app.state.trace_sink = overrides.get("trace_sink") or get_trace_sink()
     app.state.audit_sink = overrides.get("audit_sink") or get_audit_sink()
+    app.state.prompt_firewall = overrides.get("prompt_firewall") or build_prompt_firewall(settings)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -308,6 +310,43 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                 pass
 
             question = req.question
+            firewall = request.app.state.prompt_firewall
+            blocked, fw_details = firewall.check(question)
+            if blocked:
+                rule_id = fw_details.get("rule_id", "unknown")
+                category = fw_details.get("category", "INJECTION")
+                refusal_reason = RefusalReason(kind="guardrail_firewall", details={"rule_id": rule_id})
+                trace_event("guardrails.block", {"kind": "firewall", "rule_id": rule_id, "category": category})
+                _plog("guardrail_block", kind="firewall", rule_id=rule_id, category=category)
+                answer_source = "REFUSAL"
+                log_audit_message("user", req.question)
+                log_audit_message("assistant", REFUSAL_ANSWER)
+                answer_hash_audit = sha256_text(redact_normalize(REFUSAL_ANSWER))
+                latency_total = int((time.perf_counter() - start) * 1000)
+                audit_sink.enqueue_ask(
+                    AuditAsk(
+                        trace_id=trace_id,
+                        request_id=req_id,
+                        session_id=session_id,
+                        user_id=user_id,
+                        question_hash=question_hash_audit,
+                        answer_hash=answer_hash_audit,
+                        answer_source="REFUSAL",
+                        confidence=0.2,
+                        refusal_reason=refusal_reason.kind,
+                        cache_hit=False,
+                        latency_ms=latency_total,
+                        abuse_risk_score=abuse_risk_score,
+                        abuse_flags_json=flags_to_json(abuse_flags),
+                    )
+                )
+                finish_trace("refused", refusal_reason.kind, 0.2, model=None)
+                response = refusal(refusal_reason, confidence=0.2)
+                response.headers["X-Trace-ID"] = trace_id
+                response.headers["X-Answer-Source"] = "REFUSAL"
+                response.headers["X-Chat-Session-ID"] = session_id
+                return response
+
             if detect_prompt_injection(question):
                 refusal_reason = RefusalReason(kind="guardrail_injection", details={})
                 trace_event("guardrails.block", {"kind": "injection"})
@@ -559,11 +598,12 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
             trace_event("retrieval.rerank", {"top_docs": top_docs_hashed, "selected": len(selected)})
             _plog("evidence_selected", selected=len(selected), max_tokens=2800)
 
-            # Logar chunks retornados
+            # Coletar chunks para enfileirar só depois de audit_ask (evitar FK chunk->ask)
+            audit_chunks_collected: list[AuditChunk] = []
             if settings.audit_log_enabled:
                 for rank, chunk in enumerate(selected[:8], 1):
                     chunk_text_normalized = redact_normalize(chunk.text)
-                    audit_sink.enqueue_chunk(
+                    audit_chunks_collected.append(
                         AuditChunk(
                             trace_id=trace_id,
                             rank=rank,
@@ -681,6 +721,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                             abuse_flags_json=flags_to_json(abuse_flags),
                         )
                     )
+                    for c in audit_chunks_collected:
+                        audit_sink.enqueue_chunk(c)
+                    audit_chunks_collected.clear()
                     finish_trace("refused", refusal_reason.kind, 0.2, model=None)
                     response = refusal(refusal_reason, confidence=0.2)
                     response.headers["X-Trace-ID"] = trace_id
@@ -736,6 +779,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                             abuse_flags_json=flags_to_json(abuse_flags),
                         )
                     )
+                    for c in audit_chunks_collected:
+                        audit_sink.enqueue_chunk(c)
+                    audit_chunks_collected.clear()
                     finish_trace("refused", refusal_reason.kind, 0.2, model=model_name)
                     response = refusal(refusal_reason, confidence=0.2)
                     response.headers["X-Trace-ID"] = trace_id
@@ -779,6 +825,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                         abuse_flags_json=flags_to_json(abuse_flags),
                     )
                 )
+                for c in audit_chunks_collected:
+                    audit_sink.enqueue_chunk(c)
+                audit_chunks_collected.clear()
                 finish_trace("refused", refusal_reason.kind, 0.2, model=model_name)
                 response = refusal(refusal_reason, confidence=0.2)
                 response.headers["X-Trace-ID"] = trace_id
@@ -830,6 +879,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                         abuse_flags_json=flags_to_json(abuse_flags),
                     )
                 )
+                for c in audit_chunks_collected:
+                    audit_sink.enqueue_chunk(c)
+                audit_chunks_collected.clear()
                 finish_trace("refused", refusal_reason.kind, 0.2, model=model_name)
                 response = refusal(refusal_reason, confidence=0.2)
                 response.headers["X-Trace-ID"] = trace_id
@@ -865,6 +917,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                         abuse_flags_json=flags_to_json(abuse_flags),
                     )
                 )
+                for c in audit_chunks_collected:
+                    audit_sink.enqueue_chunk(c)
+                audit_chunks_collected.clear()
                 finish_trace("refused", refusal_reason.kind, 0.2, model=model_name)
                 response = refusal(refusal_reason, confidence=0.2)
                 response.headers["X-Trace-ID"] = trace_id
@@ -901,6 +956,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                         abuse_flags_json=flags_to_json(abuse_flags),
                     )
                 )
+                for c in audit_chunks_collected:
+                    audit_sink.enqueue_chunk(c)
+                audit_chunks_collected.clear()
                 finish_trace("refused", refusal_reason.kind, 0.2, model=model_name)
                 response = refusal(refusal_reason, confidence=0.2)
                 response.headers["X-Trace-ID"] = trace_id
@@ -957,6 +1015,9 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
                     abuse_flags_json=flags_to_json(abuse_flags),
                 )
             )
+            for c in audit_chunks_collected:
+                audit_sink.enqueue_chunk(c)
+            audit_chunks_collected.clear()
 
             try:
                 t_set = time.perf_counter()

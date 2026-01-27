@@ -1,0 +1,9 @@
+{
+  "regex_valid": [],
+  "regex_errors": [],
+  "perf_rejected": [],
+  "accepted": [],
+  "recall_total": 1.0,
+  "fp_rate_total": 0.0,
+  "top_fp_rules": []
+}

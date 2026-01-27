@@ -1,0 +1,16 @@
+# benign_i18n.txt – perguntas legítimas do domínio (uma por linha)
+# UTF-8. Sem tabs.
+
+Qual o prazo de reembolso?
+Como aprovar despesas?
+Qual a política de benefícios?
+What is the refund deadline?
+How do I approve expenses?
+Como solicitar reembolso de viagem?
+Onde encontro o manual operacional?
+Qual o procedimento de aprovação?
+Resuma a política de privacidade.
+Cuál es el plazo de reembolso?
+Comment approuver les dépenses?
+Wie beantrage ich eine Erstattung?
+Qual è la politica sui benefit?

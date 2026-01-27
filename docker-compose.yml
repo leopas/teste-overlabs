@@ -41,9 +41,16 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE:-}
       # Para Azure MySQL (TLS): aponta para o CA dentro do container (pode sobrescrever no .env)
       - MYSQL_SSL_CA=${MYSQL_SSL_CA:-/app/certs/DigiCertGlobalRootCA.crt.pem}
+      # Prompt Firewall (WAF de prompt)
+      - PROMPT_FIREWALL_ENABLED=${PROMPT_FIREWALL_ENABLED:-0}
+      - PROMPT_FIREWALL_RULES_PATH=${PROMPT_FIREWALL_RULES_PATH:-config/prompt_firewall.regex}
+      - PROMPT_FIREWALL_MAX_RULES=${PROMPT_FIREWALL_MAX_RULES:-200}
+      - PROMPT_FIREWALL_RELOAD_CHECK_SECONDS=${PROMPT_FIREWALL_RELOAD_CHECK_SECONDS:-2}
     volumes:
       # Relatórios/Docs gerados pelos scripts
       - ./docs:/app/docs
+      # Regras do Prompt Firewall (opcional)
+      - ./config:/app/config:ro
       # Documentos de entrada (host -> /docs)
       - ${DOCS_HOST_PATH:-./DOC-IA}:/docs:ro
     depends_on:

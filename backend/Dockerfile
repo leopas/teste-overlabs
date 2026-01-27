@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r /app/requirements-extra.txt
 COPY backend/app /app/app
 COPY backend/scripts /app/scripts
 COPY docs /app/docs
+COPY config /app/config
 COPY certs /app/certs
 
 EXPOSE 8000

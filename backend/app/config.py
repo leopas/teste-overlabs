@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     abuse_classifier_enabled: bool = True
     abuse_risk_threshold: float = 0.80
 
+    # Prompt Firewall (WAF de prompt)
+    prompt_firewall_enabled: bool = False
+    prompt_firewall_rules_path: str = "config/prompt_firewall.regex"
+    prompt_firewall_max_rules: int = 200
+    prompt_firewall_reload_check_seconds: int = 2
+    firewall_log_sample_rate: float = 0.01
+
 
 settings = Settings()
 

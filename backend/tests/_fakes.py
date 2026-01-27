@@ -65,6 +65,12 @@ class FakeRetriever:
         return self.chunks[:top_k]
 
 
+FailOnCallRetriever = FakeRetriever(
+    chunks=[],
+    raise_on_search=RuntimeError("Retriever should not be called"),
+)
+
+
 def make_chunk(
     *,
     text: str,

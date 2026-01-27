@@ -1,0 +1,7 @@
+{
+  "proposals": [],
+  "meta": {
+    "rules": "C:\\Projetos\\teste-wayon\\config\\prompt_firewall.regex",
+    "corpus": "C:\\Projetos\\teste-wayon\\backend\\tests\\firewall_corpus"
+  }
+}

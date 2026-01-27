@@ -122,6 +122,13 @@ mysql -h <host> -u <user> -p <database> < docs/db_audit_schema.sql
 - Retenção recomendada
 - Troubleshooting
 
+### Prompt Firewall (WAF de prompt)
+
+Camada opcional de regras regex em arquivo (`config/prompt_firewall.regex`) executada **antes** dos guardrails de injection/sensitive. Quando uma regra casa, a requisição é recusada (200, `sources=[]`) sem chamar retriever nem LLM. Hot reload por `mtime`; desabilitado por padrão.
+
+- Variáveis: `PROMPT_FIREWALL_ENABLED`, `PROMPT_FIREWALL_RULES_PATH`, etc. (veja `env.example`).
+- **Documentação**: [docs/prompt_firewall.md](docs/prompt_firewall.md).
+
 > R1 ingere apenas `.txt` e `.md`. Arquivos com indícios de PII (ex.: CPF) e/ou `funcionarios` no nome **são ignorados**.
 
 ### Testar o `/ask`
