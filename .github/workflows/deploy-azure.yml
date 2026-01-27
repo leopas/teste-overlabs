@@ -118,12 +118,38 @@ jobs:
           ignore-unfixed: true
           skip-version-check: true
       
+      - name: Setup Python for security scans
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Scan dependencies with pip-audit
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          echo "🔍 Scanning Python dependencies for vulnerabilities..."
+          pip-audit --desc --format json -o pip-audit-report.json || true
+          pip-audit --desc --format text || true
+      
       - name: Scan Python code with Bandit
         continue-on-error: true
         run: |
           pip install bandit[toml]
+          echo "🔍 Scanning Python code with Bandit..."
           bandit -r backend/app -f json -o bandit-report.json || true
           bandit -r backend/app -f txt || true
+      
+      - name: Scan code with Semgrep
+        continue-on-error: true
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/python
+            p/owasp-top-ten
+          generateSarif: "1"
+          generateGitHubSARIF: "1"
+          publishSarif: "false"
 
   deploy-staging:
     name: Deploy to Staging
