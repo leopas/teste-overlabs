@@ -1,13 +1,20 @@
 # Audit Logging e Rastreabilidade
 
-## Visão Geral
+Documentação para banca: session tracking, answer source, persistência, rule_id no firewall. Diagrama ER: [diagrams.md#e](diagrams.md#e-er-do-schema-de-audit).
 
-O sistema de audit logging persiste rastreabilidade completa de todas as interações com o endpoint `/ask`, incluindo:
+---
 
-- **Chat log completo**: Perguntas e respostas (user/assistant)
-- **Metadados técnicos**: Origem da resposta (CACHE/LLM/REFUSAL), latência, confiança, chunks retornados
-- **Classificação de abuso**: Score de risco e flags de detecção
-- **Criptografia opcional**: Texto bruto criptografado (AES-256-GCM) para casos de alto risco
+## O que é
+
+Sistema de audit que persiste rastreabilidade das interações com `POST /ask`: chat log (user/assistant), metadados técnicos (answer_source, latência, confiança, chunks), classificação de abuso e, quando aplicável, texto bruto criptografado (AES-256-GCM).
+
+---
+
+## Como funciona
+
+- **Session tracking:** `X-Chat-Session-ID` — gerado pelo servidor se o cliente não enviar; ecoado em toda resposta. Mensagens e `audit_ask` são ligadas à sessão.
+- **Answer source:** `X-Answer-Source` = `CACHE` | `LLM` | `REFUSAL`. Também gravado em `audit_ask.answer_source`. Em recusa, `refusal_reason` indica o motivo (ex.: `guardrail_firewall`, `no_evidence`).
+- **Persistência:** Assíncrona (fila em memória, worker grava em MySQL). Tabelas: `audit_session`, `audit_message`, `audit_ask`, `audit_retrieval_chunk`, `audit_vector_fingerprint` (opcional). Schema em `docs/db_audit_schema.sql`.
 
 ## O que é Gravado
 
@@ -26,6 +33,11 @@ O sistema de audit logging persiste rastreabilidade completa de todas as intera�
 ### Quando `AUDIT_LOG_RAW_MODE=always` ou (`risk_only` + `risk_score >= threshold`)
 
 - **Texto bruto criptografado** (AES-256-GCM) em envelope JSON
+
+### Quando o firewall bloqueia (rule_id)
+
+- Em `audit_ask` fica apenas `refusal_reason = 'guardrail_firewall'`; **o `rule_id` não é persistido no schema**.
+- **O `rule_id` existe em logs:** evento `firewall_block` (rule_id, category, question_hash, trace_id, request_id) e, no pipeline, `guardrail_block` com `rule_id` e `category`. Para saber qual regra bloqueou, correlacione pelo `trace_id` com os logs (structlog/agregador).
 
 ## Configuração
 
@@ -154,6 +166,17 @@ WHERE m.session_id = 'abc123'
 ORDER BY m.created_at;
 ```
 
+### Recusas por firewall (rule_id nos logs)
+
+```sql
+SELECT trace_id, request_id, session_id, question_hash, created_at
+FROM audit_ask
+WHERE refusal_reason = 'guardrail_firewall'
+ORDER BY created_at DESC;
+```
+
+Para obter o `rule_id` que bloqueou, correlacione `trace_id` com o evento `firewall_block` nos logs.
+
 ## Headers de Resposta
 
 O endpoint `/ask` retorna os seguintes headers:
@@ -229,6 +252,18 @@ O sistema segue o princípio de "mínimo necessário":
 - Hash sempre salvo (identificação sem texto)
 - Texto redigido quando `AUDIT_LOG_INCLUDE_TEXT=1`
 - Texto bruto apenas quando necessário (always ou risk_only com threshold)
+
+## Como validar
+
+- Enviar `POST /ask` com e sem `X-Chat-Session-ID`; conferir que o header é ecoado e que mensagens do mesmo `session_id` aparecem em `audit_message`.
+- Comparar `X-Answer-Source` (CACHE / LLM / REFUSAL) com `audit_ask.answer_source` e com `refusal_reason` quando for REFUSAL.
+- Consultar `audit_ask` e `audit_retrieval_chunk` por `trace_id` retornado nos headers; verificar chunks apenas quando houve retrieval (não em cache hit puro nem em recusa antes do retriever).
+
+## Limitações
+
+- `rule_id` do firewall não está no banco; usar logs para correlacionar.
+- Audit depende de `TRACE_SINK=mysql` e `MYSQL_*`; com `noop`, nada é persistido.
+- Worker assíncrono: em fila cheia, eventos podem ser descartados (warning em log).
 
 ## Troubleshooting
 

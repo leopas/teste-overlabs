@@ -2,6 +2,8 @@
 
 Backend com RAG e **recusa quando não há evidência**, priorizando documentos **mais confiáveis e mais recentes**. Funciona sem chave OpenAI (modo stub).
 
+**Documentação para avaliadores (banca):** [docs/README.md](docs/README.md) — Guia do Avaliador, arquitetura, segurança, observabilidade, audit e runbook.
+
 ### Stack
 - **FastAPI** (`/ask`, `/healthz`, `/readyz`, `/metrics`, `/docs`)
 - **Qdrant** (vector DB)
