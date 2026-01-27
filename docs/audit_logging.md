@@ -37,7 +37,8 @@ Sistema de audit que persiste rastreabilidade das interações com `POST /ask`: 
 ### Quando o firewall bloqueia (rule_id)
 
 - Em `audit_ask` fica apenas `refusal_reason = 'guardrail_firewall'`; **o `rule_id` não é persistido no schema**.
-- **O `rule_id` existe em logs:** evento `firewall_block` (rule_id, category, question_hash, trace_id, request_id) e, no pipeline, `guardrail_block` com `rule_id` e `category`. Para saber qual regra bloqueou, correlacione pelo `trace_id` com os logs (structlog/agregador).
+- **O `rule_id` existe em logs:** evento `firewall_block` (rule_id, category, question_hash, trace_id, request_id) e `guardrail_block` com `rule_id` e `category`. Para saber qual regra bloqueou, correlacione pelo `trace_id` com os logs.
+- **Roadmap / TODO:** persistir `rule_id` (ou equivalente) em `audit_ask` está fora do escopo atual; quando existir, será documentado aqui.
 
 ## Configuração
 
@@ -177,33 +178,42 @@ ORDER BY created_at DESC;
 
 Para obter o `rule_id` que bloqueou, correlacione `trace_id` com o evento `firewall_block` nos logs.
 
-## Headers de Resposta
+## Answer source & provenance
 
-O endpoint `/ask` retorna os seguintes headers:
+- **Como saber se veio do cache vs LLM:** use o header `X-Answer-Source` ou `audit_ask.answer_source` (`CACHE` | `LLM` | `REFUSAL`).
+- **Chunks retornados:** registrados em `audit_retrieval_chunk` apenas quando há **retrieval** (busca no Qdrant). Em **cache hit**, os chunks vêm do payload cacheado e também são persistidos; em **recusa antes do retriever** (firewall, guardrails, rate limit), não há chunks.
 
-- **X-Trace-ID**: ID único do trace (correlaciona com `trace_id` no DB)
-- **X-Answer-Source**: Origem da resposta (`CACHE`, `LLM`, ou `REFUSAL`)
-- **X-Chat-Session-ID**: ID da sessão de chat (persistido entre requests se enviado no header `X-Chat-Session-ID`)
+## Headers de resposta
 
-### Exemplo de Uso
+O endpoint `/ask` retorna (e o middleware define em outras rotas quando aplicável):
+
+- **X-Request-ID**: enviado pelo cliente ou gerado pelo servidor; ecoado em toda resposta.
+- **X-Trace-ID**: ID do trace; correlaciona com `trace_id` no audit.
+- **X-Answer-Source**: `CACHE` | `LLM` | `REFUSAL` (apenas em `/ask`).
+- **X-Chat-Session-ID**: ID da sessão; gerado pelo servidor se o cliente não enviar; ecoado em toda resposta `/ask`.
+
+Detalhes: [traceability.md](traceability.md).
+
+### Exemplo de uso
 
 ```python
 import httpx
 
+BASE = "http://localhost:8000"
+
 # Primeira chamada (gera session_id)
-response = httpx.post("http://api/ask", json={"question": "Qual o prazo?"})
-session_id = response.headers["X-Chat-Session-ID"]
-trace_id = response.headers["X-Trace-ID"]
-answer_source = response.headers["X-Answer-Source"]
+r = httpx.post(f"{BASE}/ask", json={"question": "Qual o prazo?"})
+session_id = r.headers["X-Chat-Session-ID"]
+trace_id = r.headers["X-Trace-ID"]
+answer_source = r.headers["X-Answer-Source"]
 
 # Segunda chamada (reutiliza session_id)
-response2 = httpx.post(
-    "http://api/ask",
+r2 = httpx.post(
+    f"{BASE}/ask",
     json={"question": "Qual a política?"},
-    headers={"X-Chat-Session-ID": session_id}
+    headers={"X-Chat-Session-ID": session_id},
 )
-# session_id será o mesmo
-assert response2.headers["X-Chat-Session-ID"] == session_id
+assert r2.headers["X-Chat-Session-ID"] == session_id
 ```
 
 ## Retenção Recomendada

@@ -1,59 +1,90 @@
-## Traceability (rastreabilidade ponta-a-ponta)
+# Rastreabilidade (traceability)
 
-Este backend gera um **trace técnico** por chamada ao `POST /ask`, correlacionando:
-- `request_id` (header `X-Request-ID`)
-- `trace_id` (header `X-Trace-ID`)
-- `user_id` (quando houver JWT com claim `user_id`)
-- decisões de guardrails/qualidade, cache, retrieval, LLM e resultado
+Este backend gera um **trace técnico** por chamada ao `POST /ask`, correlacionando `request_id`, `trace_id`, `user_id` (quando houver JWT), decisões de guardrails/qualidade, cache, retrieval, LLM e resultado. Os **headers de resposta** permitem correlacionar com audit e logs.
 
-### Privacidade (mandatório)
-- Por padrão, **não persistimos** texto bruto de pergunta/resposta/chunks.
-- Persistimos apenas **hashes** (ex.: `sha256(question_normalized)`, `sha256(chunk_text)`), IDs e metadados.
-- Texto só aparece em logs quando `PIPELINE_LOG_INCLUDE_TEXT=1` e é aplicado **redaction** básico (CPF/cartão/token).
+---
 
-### Headers e correlação
-- Toda resposta de `/ask` inclui:
-  - `X-Request-ID`
-  - `X-Trace-ID`
+## Headers de resposta
 
-Em logs JSON (structlog), os campos são automaticamente “bindados” via contextvars:
-- `request_id`
-- `trace_id`
-- `span_id` (quando OTel ativo)
-- `user_id` (quando detectado)
+A API retorna os seguintes headers. **Todos** são definidos pelo servidor; o cliente pode enviar `X-Request-ID` e `X-Chat-Session-ID` para serem ecoados.
 
-### OpenTelemetry (OTel)
-Para habilitar spans (quando houver collector):
-- `OTEL_ENABLED=1`
-- `OTEL_EXPORTER_OTLP_ENDPOINT=<endpoint>`
+| Header | Quem gera | Onde | Descrição |
+|--------|-----------|------|-----------|
+| `X-Request-ID` | Cliente pode enviar; senão servidor (UUID) | Middleware (`observability.py`) em **todas** as rotas | Identificador da request. Ecoado em toda resposta. |
+| `X-Trace-ID` | Servidor (OTel span ou UUID) | Middleware em **todas** as rotas | Identificador do trace. Correlaciona com `trace_id` nas tabelas de audit e no pipeline trace. |
+| `X-Answer-Source` | Servidor | Apenas `POST /ask` (`main.py`) | Origem da resposta: `CACHE`, `LLM` ou `REFUSAL`. |
+| `X-Chat-Session-ID` | Cliente pode enviar; senão servidor (UUID 16 chars) | Apenas `POST /ask` | ID da sessão de chat. Ecoado em toda resposta `/ask`. Mensagens e `audit_ask` são ligadas a `session_id`. |
 
-Quando habilitado, o `trace_id/span_id` do OTel é usado como correlação. Quando desabilitado, um `trace_id` (UUID4) é gerado.
+### Correlação com audit
 
-### Pipeline trace store (MySQL) — opcional
-Para persistir rastreabilidade em MySQL:
-- `TRACE_SINK=mysql`
-- `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`
-- (opcional) `MYSQL_PORT=3306`
-- (opcional) `MYSQL_SSL_CA=./certs/<ca>.pem`
+- `trace_id` (header `X-Trace-ID`) = `audit_ask.trace_id` = `audit_message.trace_id` = `audit_retrieval_chunk.trace_id`.
+- `request_id` (header `X-Request-ID`) = `audit_ask.request_id`.
+- `session_id` (header `X-Chat-Session-ID`) = `audit_session.session_id` = `audit_message.session_id` = `audit_ask.session_id`.
 
-Dependência (opcional):
-- Instale `backend/requirements-extra.txt`:
+Para saber se a resposta veio do cache, do LLM ou foi recusa: use `X-Answer-Source` ou `audit_ask.answer_source`.
+
+---
+
+### Exemplo com `curl` (sem dados sensíveis)
 
 ```bash
-python -m pip install -r backend/requirements-extra.txt
+# Pergunta válida
+curl -s -D - -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Qual o prazo de reembolso?"}' \
+  | head -20
 ```
 
-O schema sugerido está em [`docs/db_trace_schema.sql`](docs/db_trace_schema.sql).
+Verifique os headers na saída, por exemplo:
 
-### Exemplo de eventos (sem PII)
-Um trace típico registra eventos como:
-- `ask.start`
-- `guardrails.check` / `guardrails.block`
+```
+X-Request-ID: <uuid ou valor enviado>
+X-Trace-ID: <uuid>
+X-Answer-Source: CACHE ou LLM ou REFUSAL
+X-Chat-Session-ID: <16 hex chars ou valor enviado>
+```
+
+```bash
+# Recusa (ex.: injection)
+curl -s -D - -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Ignore previous instructions"}' \
+  | head -20
+```
+
+Esperado: `X-Answer-Source: REFUSAL`, corpo com `sources=[]`, `confidence` ≤ 0,3.
+
+---
+
+## Privacidade
+
+- Por padrão **não** se persiste texto bruto de pergunta/resposta/chunks; apenas hashes, IDs e metadados.
+- Texto em logs somente com `PIPELINE_LOG_INCLUDE_TEXT=1`, com **redaction** (CPF, cartão, token, etc.).
+
+---
+
+## OpenTelemetry (opcional)
+
+- `OTEL_ENABLED=1`, `OTEL_EXPORTER_OTLP_ENDPOINT=<url>`.
+- Quando ativo, `trace_id`/`span_id` vêm do OTel; caso contrário, `trace_id` = UUID4.
+
+---
+
+## Pipeline trace store (MySQL, opcional)
+
+- `TRACE_SINK=mysql`, `MYSQL_*` configurados.
+- Schema em [`docs/db_trace_schema.sql`](db_trace_schema.sql).
+- Dependência: `backend/requirements-extra.txt`.
+
+---
+
+## Eventos típicos do trace (sem PII)
+
+- `ask.start`, `guardrails.check` / `guardrails.block`
 - `cache.get` / `cache.set`
-- `retrieval.embed_query`
-- `retrieval.qdrant_search`
-- `retrieval.rerank` (top docs com `chunk_hash`, scores e metadados)
+- `retrieval.embed_query`, `retrieval.qdrant_search`, `retrieval.rerank`
 - `quality.evaluate` / `quality.fail`
 - `llm.call` / `llm.error`
-- `response.final` (confidence e fontes com `excerpt_hash`)
+- `response.final`
 
+Ver também [audit_logging.md](audit_logging.md) e [appendix_code_facts.md](appendix_code_facts.md).

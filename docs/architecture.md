@@ -69,18 +69,23 @@ flowchart LR
 
 Ordem executada no código:
 
-1. **Valida input** (`question` 3–2000 chars, sem controle).
-2. **Prompt Firewall** (se habilitado): regras regex; match → REFUSAL, sem retriever/LLM.
-3. **Guardrails:** injection (regex) e sensitive/PII (CPF, cartão, senha, etc.) → REFUSAL.
-4. **Normaliza** pergunta (strip, lower, colapsa whitespace).
-5. **Cache** Redis: key = `sha256(normalized)`; hit → 200 + `X-Answer-Source=CACHE`.
-6. **Embedding** (fastembed ou OpenAI) + **Qdrant** `top_k=8`.
-7. **Re-rank** (confiança/recência), **select_evidence** (limite tokens), **detecção de conflito** (prazos nacionais/internacionais).
-8. **LLM** (OpenAI ou stub): refusal/vazio → REFUSAL.
-9. **Qualidade:** threshold de confidence, cross-check, post-validate → falha implica REFUSAL.
-10. **Resposta** 200; `X-Answer-Source` = CACHE | LLM | REFUSAL. Em todos os casos, audit (session, message, ask; chunks quando há retrieval).
+1. **Valida input** (`question` 3–2000 chars, sem caracteres de controle).
+2. **Rate limit** (Redis por IP); excedido → REFUSAL.
+3. **Prompt Firewall** (se habilitado): regras regex; match → REFUSAL, sem retriever/LLM.
+4. **Guardrails:** injection (regex) e sensitive/PII (CPF, cartão, senha, etc.) → REFUSAL.
+5. **Normaliza** pergunta (`security.normalize_question`: strip, lower, colapsa whitespace).
+6. **Cache** Redis: key = `sha256(normalized)`; hit → 200 + `X-Answer-Source=CACHE`.
+7. **Embedding** (fastembed ou OpenAI) + **Qdrant** `top_k=8`.
+8. **Re-rank** (confiança/recência), **select_evidence** (limite tokens), **detecção de conflito**.
+9. **Conflito** (`quality.detect_conflict`): prazos em dias e datas `dd/mm/yyyy` por escopo (nacional/internacional/geral). Conflito irresolúvel → REFUSAL.
+10. **LLM** (OpenAI ou stub): refusal/vazio → REFUSAL.
+11. **Qualidade:**  
+    - **Threshold** de confidence (&lt; 0,65 → REFUSAL).  
+    - **Cross-check** (`cross_check_ok`): 2+ fontes distintas **ou** 1 fonte POLICY/MANUAL com trust ≥ 0,85; sem conflito.  
+    - **Pós-validação** (`post_validate_answer`): números citados na resposta devem existir nos trechos de evidência; caso contrário → REFUSAL.
+12. **Resposta** 200; `X-Answer-Source` = CACHE | LLM | REFUSAL. Audit (session, message, ask; chunks quando há retrieval).
 
-Diagrama de sequência detalhado: [diagrams.md#c](diagrams.md#c-sequência-do-ask-detalhado).
+Diagrama de sequência: [diagrams.md#c](diagrams.md#c-sequência-do-ask-detalhado).
 
 ---
 
@@ -93,12 +98,20 @@ Diagrama: [diagrams.md#d](diagrams.md#d-pipeline-de-ingestão).
 
 ---
 
+## Hashing: cache vs audit
+
+- **Hash de cache:** Normalização `security.normalize_question` (strip, lower, collapse ws) → `cache_key_for_question` = SHA256. Usado apenas para Redis (get/set de resposta).
+- **Hash / fingerprint de audit:** Normalização `redaction.normalize_text` (strip, remove control chars, collapse ws; sem lower) → `sha256_text`. Usado em `audit_ask` (`question_hash`, `answer_hash`), `audit_message` e `audit_retrieval_chunk` (`text_hash`). **Distinto** do hash de cache.
+
+---
+
 ## Decisões de projeto
 
 | Decisão | Detalhe |
 |--------|---------|
-| **Recusa sem evidência** | Sem chunks relevantes, ou conflito irresolúvel, ou qualidade falha → REFUSAL, `sources=[]`, confidence ≤ 0,3. |
+| **Recusa sem evidência** | Sem chunks relevantes, ou conflito irresolúvel, ou falha em quality (threshold, cross-check, post-validate) → REFUSAL, `sources=[]`, confidence ≤ 0,3. |
 | **Prioridade confiança/recência** | Re-rank por `trust_score`, `freshness_score`, `final_score`; em conflito, escolhe o “melhor” chunk e pode ainda recusar se persistir conflito. |
+| **Conflito** | Apenas prazos (dias) e datas (dd/mm/yyyy) por escopo. Números genéricos na resposta checados em `post_validate_answer`. |
 | **Cache** | Key = `sha256(normalized_question)`. TTL `CACHE_TTL_SECONDS` (default 600). Sem prefixo; rate limit usa `rl:<ip>:<epochMinute>`. |
 | **LLM opcional / stub** | Sem `OPENAI_API_KEY` usa stub determinístico; com chave usa `gpt-4o-mini` (ou `OPENAI_MODEL`). |
 | **OTel opcional** | `OTEL_ENABLED=1` e `OTEL_EXPORTER_OTLP_ENDPOINT`; sem collector não quebra. |
@@ -131,7 +144,9 @@ Apenas **nomes**; não incluir valores reais.
 
 - Subir stack: `docker compose up -d`; `GET /healthz`, `GET /readyz`.
 - Rodar `scan_docs` + `ingest`; verificar `./docs/layout_report.md` e logs de ingest.
-- `POST /ask` com pergunta válida; checar 200, headers `X-Trace-ID`, `X-Request-ID`, `X-Answer-Source`, `X-Chat-Session-ID`; `GET /metrics`.
+- `POST /ask` com pergunta válida; checar 200 e headers `X-Request-ID`, `X-Trace-ID`, `X-Answer-Source`, `X-Chat-Session-ID`; `GET /metrics`.
+
+Ver [README](README.md) (Guia do avaliador) e [appendix_code_facts.md](appendix_code_facts.md).
 
 ---
 

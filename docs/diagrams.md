@@ -201,12 +201,12 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    R[Request POST /ask] --> FW{Prompt Firewall\nhabilitado?}
-    FW -->|match| REF1[REFUSAL]
+    R[Request POST /ask] --> RL{Rate limit}
+    RL -->|excedido| REF1[REFUSAL]
+    RL -->|ok| FW{Prompt Firewall\nhabilitado?}
+    FW -->|match| REF2[REFUSAL]
     FW -->|no match / off| G[Guardrails]
-    G -->|injection| REF2[REFUSAL]
-    G -->|sensitive/PII| REF3[REFUSAL]
-    G -->|ok| RL[Rate limit]
-    RL -->|excedido| REF4[REFUSAL]
-    RL -->|ok| Pipe[Pipeline RAG\ncache → retrieval → LLM]
+    G -->|injection| REF3[REFUSAL]
+    G -->|sensitive/PII| REF4[REFUSAL]
+    G -->|ok| Pipe[Pipeline RAG\ncache → retrieval → LLM]
 ```
