@@ -41,8 +41,9 @@ apikey*.json
 /.aws/
 /private/
 /credentials/
-/.azure/
+/.azure/*
 !.azure/.gitkeep
+!.azure/deploy_state.json
 
 # Python
 __pycache__/
