@@ -178,25 +178,49 @@ jobs:
           echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
           echo "key_vault=$KEY_VAULT" >> $GITHUB_OUTPUT
       
+      - name: Verify Container App exists
+        run: |
+          echo "🔍 Verificando se Container App existe..."
+          API_APP="${{ steps.state.outputs.api_app }}"
+          RESOURCE_GROUP="${{ steps.state.outputs.resource_group }}"
+          
+          APP_EXISTS=$(az containerapp show \
+            --name "$API_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "name" -o tsv 2>/dev/null || echo "")
+          
+          if [ -z "$APP_EXISTS" ]; then
+            echo "❌ Container App '$API_APP' não encontrado no Resource Group '$RESOURCE_GROUP'"
+            echo "   Execute o bootstrap primeiro:"
+            echo "   .\infra\bootstrap_container_apps.ps1 -EnvFile .env -Stage prod -Location brazilsouth"
+            exit 1
+          fi
+          
+          echo "✅ Container App encontrado: $APP_EXISTS"
+      
       - name: Configure Managed Identity for Key Vault
         run: |
           echo "🔐 Configurando Managed Identity para acesso ao Key Vault..."
           
+          API_APP="${{ steps.state.outputs.api_app }}"
+          RESOURCE_GROUP="${{ steps.state.outputs.resource_group }}"
+          KEY_VAULT="${{ steps.state.outputs.key_vault }}"
+          
           # Habilitar Managed Identity no Container App (se não estiver habilitado)
           PRINCIPAL_ID=$(az containerapp identity show \
-            --name ${{ steps.state.outputs.api_app }} \
-            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --name "$API_APP" \
+            --resource-group "$RESOURCE_GROUP" \
             --query principalId -o tsv 2>/dev/null || echo "")
           
           if [ -z "$PRINCIPAL_ID" ]; then
             echo "  Habilitando Managed Identity..."
             az containerapp identity assign \
-              --name ${{ steps.state.outputs.api_app }} \
-              --resource-group ${{ steps.state.outputs.resource_group }} \
+              --name "$API_APP" \
+              --resource-group "$RESOURCE_GROUP" \
               --system-assigned
             PRINCIPAL_ID=$(az containerapp identity show \
-              --name ${{ steps.state.outputs.api_app }} \
-              --resource-group ${{ steps.state.outputs.resource_group }} \
+              --name "$API_APP" \
+              --resource-group "$RESOURCE_GROUP" \
               --query principalId -o tsv)
           fi
           
@@ -204,7 +228,7 @@ jobs:
           
           # Conceder permissão Key Vault Secrets User
           SUB_ID=$(az account show --query id -o tsv)
-          SCOPE="/subscriptions/$SUB_ID/resourceGroups/${{ steps.state.outputs.resource_group }}/providers/Microsoft.KeyVault/vaults/${{ steps.state.outputs.key_vault }}"
+          SCOPE="/subscriptions/$SUB_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.KeyVault/vaults/$KEY_VAULT"
           
           EXISTING=$(az role assignment list \
             --scope "$SCOPE" \
