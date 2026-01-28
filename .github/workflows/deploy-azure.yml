@@ -1,4 +1,4 @@
-name: Deploy to Azure App Service
+name: Deploy to Azure Container Apps
 
 on:
   push:
@@ -22,7 +22,6 @@ permissions:
 env:
   ACR_NAME: acrchoperia
   IMAGE_NAME: choperia-api
-  COMPOSE_FILE: docker-compose.azure.yml
 
 jobs:
   validate:
@@ -49,7 +48,7 @@ jobs:
         run: |
           if [ ! -f .azure/deploy_state.json ]; then
             echo "❌ .azure/deploy_state.json não encontrado"
-            echo "   Execute: python infra/bootstrap_azure.py --env .env --stage prod"
+            echo "   Execute: .\infra\bootstrap_container_apps.ps1 -EnvFile .env -Stage prod -Location brazilsouth"
             exit 1
           fi
           echo "✅ deploy_state.json encontrado"
@@ -146,12 +145,12 @@ jobs:
           semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" --json -o semgrep-results.json || true
           semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" || true
 
-  deploy-staging:
-    name: Deploy to Staging
+  deploy:
+    name: Deploy to Container App
     runs-on: ubuntu-latest
     needs: build
     environment:
-      name: staging
+      name: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -170,74 +169,106 @@ jobs:
             echo "❌ deploy_state.json não encontrado"
             exit 1
           fi
-          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          API_APP=$(jq -r '.apiAppName' .azure/deploy_state.json)
           RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
-          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+          ACR_NAME=$(jq -r '.acrName' .azure/deploy_state.json)
+          KEY_VAULT=$(jq -r '.keyVaultName' .azure/deploy_state.json)
+          echo "api_app=$API_APP" >> $GITHUB_OUTPUT
           echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "key_vault=$KEY_VAULT" >> $GITHUB_OUTPUT
       
-      - name: Generate compose with image tag
+      - name: Configure Managed Identity for Key Vault
         run: |
-          IMAGE_TAG=${{ github.sha }}
-          sed "s/\${IMAGE_TAG:-latest}/$IMAGE_TAG/g" ${{ env.COMPOSE_FILE }} > docker-compose.deploy.yml
-          echo "📋 Compose file gerado:"
-          cat docker-compose.deploy.yml
-      
-      - name: Check if staging slot exists
-        id: check_slot
-        run: |
-          SLOT_EXISTS=$(az webapp deployment slot list \
-            --name ${{ steps.state.outputs.app_name }} \
+          echo "🔐 Configurando Managed Identity para acesso ao Key Vault..."
+          
+          # Habilitar Managed Identity no Container App (se não estiver habilitado)
+          PRINCIPAL_ID=$(az containerapp identity show \
+            --name ${{ steps.state.outputs.api_app }} \
             --resource-group ${{ steps.state.outputs.resource_group }} \
-            --query "[?name=='staging'].name" -o tsv 2>/dev/null || echo "")
-          if [ -z "$SLOT_EXISTS" ]; then
-            echo "slot_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️  Staging slot não existe (App Service Plan Basic não suporta slots)"
-            echo "   Fazendo deploy direto na produção..."
+            --query principalId -o tsv 2>/dev/null || echo "")
+          
+          if [ -z "$PRINCIPAL_ID" ]; then
+            echo "  Habilitando Managed Identity..."
+            az containerapp identity assign \
+              --name ${{ steps.state.outputs.api_app }} \
+              --resource-group ${{ steps.state.outputs.resource_group }} \
+              --system-assigned
+            PRINCIPAL_ID=$(az containerapp identity show \
+              --name ${{ steps.state.outputs.api_app }} \
+              --resource-group ${{ steps.state.outputs.resource_group }} \
+              --query principalId -o tsv)
+          fi
+          
+          echo "  Principal ID: $PRINCIPAL_ID"
+          
+          # Conceder permissão Key Vault Secrets User
+          SUB_ID=$(az account show --query id -o tsv)
+          SCOPE="/subscriptions/$SUB_ID/resourceGroups/${{ steps.state.outputs.resource_group }}/providers/Microsoft.KeyVault/vaults/${{ steps.state.outputs.key_vault }}"
+          
+          EXISTING=$(az role assignment list \
+            --scope "$SCOPE" \
+            --assignee "$PRINCIPAL_ID" \
+            --role "Key Vault Secrets User" \
+            --query "[0].id" -o tsv 2>/dev/null || echo "")
+          
+          if [ -z "$EXISTING" ]; then
+            echo "  Concedendo permissão Key Vault Secrets User..."
+            az role assignment create \
+              --scope "$SCOPE" \
+              --assignee "$PRINCIPAL_ID" \
+              --role "Key Vault Secrets User" 2>&1 || echo "  (Pode já existir)"
           else
-            echo "slot_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Staging slot encontrado"
+            echo "  Permissão já existe"
           fi
       
-      - name: Deploy to staging slot (if exists)
-        if: steps.check_slot.outputs.slot_exists == 'true'
+      - name: Update Container App with new image
         run: |
-          az webapp config container set \
-            --name ${{ steps.state.outputs.app_name }} \
+          echo "🚀 Atualizando Container App com nova imagem..."
+          IMAGE_TAG=${{ github.sha }}
+          IMAGE_REF="${{ steps.state.outputs.acr_name }}.azurecr.io/${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+          
+          echo "  Imagem: $IMAGE_REF"
+          
+          az containerapp update \
+            --name ${{ steps.state.outputs.api_app }} \
             --resource-group ${{ steps.state.outputs.resource_group }} \
-            --slot staging \
-            --multicontainer-config-type compose \
-            --multicontainer-config-file docker-compose.deploy.yml
+            --image "$IMAGE_REF"
+          
+          echo "✅ Container App atualizado"
       
-      - name: Deploy directly to production (no slot)
-        if: steps.check_slot.outputs.slot_exists == 'false'
+      - name: Wait for new revision
+        id: wait_revision
         run: |
-          az webapp config container set \
-            --name ${{ steps.state.outputs.app_name }} \
+          echo "⏳ Aguardando nova revisão ficar pronta (30s)..."
+          sleep 30
+          
+          # Obter revisão mais recente
+          LATEST_REVISION=$(az containerapp revision list \
+            --name ${{ steps.state.outputs.api_app }} \
             --resource-group ${{ steps.state.outputs.resource_group }} \
-            --multicontainer-config-type compose \
-            --multicontainer-config-file docker-compose.deploy.yml
+            --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
+          
+          echo "  Revisão mais recente: $LATEST_REVISION"
+          echo "revision_name=$LATEST_REVISION" >> $GITHUB_OUTPUT
       
-      - name: Restart staging slot (if exists)
-        if: steps.check_slot.outputs.slot_exists == 'true'
+      - name: Set traffic to new revision
         run: |
-          az webapp restart \
-            --name ${{ steps.state.outputs.app_name }} \
+          echo "🔄 Direcionando 100% do tráfego para nova revisão..."
+          REVISION_NAME="${{ steps.wait_revision.outputs.revision_name }}"
+          
+          # Ativar a nova revisão (direciona 100% do tráfego automaticamente)
+          az containerapp revision activate \
+            --name ${{ steps.state.outputs.api_app }} \
             --resource-group ${{ steps.state.outputs.resource_group }} \
-            --slot staging
-      
-      - name: Restart production (no slot)
-        if: steps.check_slot.outputs.slot_exists == 'false'
-        run: |
-          az webapp restart \
-            --name ${{ steps.state.outputs.app_name }} \
-            --resource-group ${{ steps.state.outputs.resource_group }}
+            --revision "$REVISION_NAME"
+          
+          echo "✅ Tráfego direcionado para revisão: $REVISION_NAME"
 
-  smoke-staging:
-    name: Smoke Test Staging
+  smoke-test:
+    name: Smoke Test
     runs-on: ubuntu-latest
-    needs: deploy-staging
-    outputs:
-      slot_exists: ${{ steps.check_slot.outputs.slot_exists }}
+    needs: deploy
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -249,34 +280,20 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       
-      - name: Load deploy state and check slot
-        id: check_slot
+      - name: Get API URL
+        id: api_url
         run: |
-          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
+          API_APP=$(jq -r '.apiAppName' .azure/deploy_state.json)
           RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
-          SLOT_EXISTS=$(az webapp deployment slot list \
-            --name $APP_NAME \
+          
+          FQDN=$(az containerapp show \
+            --name $API_APP \
             --resource-group $RESOURCE_GROUP \
-            --query "[?name=='staging'].name" -o tsv 2>/dev/null || echo "")
-          if [ -z "$SLOT_EXISTS" ]; then
-            TEST_URL="https://${APP_NAME}.azurewebsites.net"
-            echo "slot_exists=false" >> $GITHUB_OUTPUT
-          else
-            TEST_URL="https://${APP_NAME}-staging.azurewebsites.net"
-            echo "slot_exists=true" >> $GITHUB_OUTPUT
-          fi
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          
+          TEST_URL="https://$FQDN"
           echo "test_url=$TEST_URL" >> $GITHUB_OUTPUT
-      
-      - name: Load test URL
-        id: state
-        run: |
-          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
-          if [ "${{ steps.check_slot.outputs.slot_exists }}" == "true" ]; then
-            TEST_URL="https://${APP_NAME}-staging.azurewebsites.net"
-          else
-            TEST_URL="https://${APP_NAME}.azurewebsites.net"
-          fi
-          echo "test_url=$TEST_URL" >> $GITHUB_OUTPUT
+          echo "API URL: $TEST_URL"
       
       - name: Wait for deployment
         run: |
@@ -286,80 +303,26 @@ jobs:
       - name: Run smoke test
         run: |
           chmod +x infra/smoke_test.sh
-          infra/smoke_test.sh ${{ steps.state.outputs.test_url }} 30 5 2
-
-  swap:
-    name: Swap Staging to Production
-    runs-on: ubuntu-latest
-    needs: smoke-staging
-    if: needs.smoke-staging.outputs.slot_exists == 'true'
-    environment:
-      name: production
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Login to Azure
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      
-      - name: Load deploy state
-        id: state
-        run: |
-          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
-          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
-          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
-          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
-      
-      - name: Swap slots
-        run: |
-          echo "🔄 Fazendo swap staging → production..."
-          az webapp deployment slot swap \
-            --resource-group ${{ steps.state.outputs.resource_group }} \
-            --name ${{ steps.state.outputs.app_name }} \
-            --slot staging \
-            --target-slot production
-          echo "✅ Swap concluído"
-
-  smoke-prod:
-    name: Smoke Test Production
-    runs-on: ubuntu-latest
-    needs: 
-      - swap
-      - smoke-staging
-    if: always() && (needs.swap.result == 'success' || needs.swap.result == 'skipped')
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Load deploy state
-        id: state
-        run: |
-          APP_NAME=$(jq -r '.appServiceName' .azure/deploy_state.json)
-          PROD_URL="https://${APP_NAME}.azurewebsites.net"
-          echo "prod_url=$PROD_URL" >> $GITHUB_OUTPUT
-      
-      - name: Wait for deployment/swap
-        run: |
-          echo "⏳ Aguardando 30s para deployment estabilizar..."
-          sleep 30
-      
-      - name: Run smoke test
-        run: |
-          chmod +x infra/smoke_test.sh
-          infra/smoke_test.sh ${{ steps.state.outputs.prod_url }} 30 5 2
+          infra/smoke_test.sh ${{ steps.api_url.outputs.test_url }} 30 5 2
       
       - name: Deployment summary
         env:
-          PROD_URL: ${{ steps.state.outputs.prod_url }}
+          TEST_URL: ${{ steps.api_url.outputs.test_url }}
           IMAGE_TAG: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           echo "## ✅ Deploy Concluído" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**URL de Produção:** $PROD_URL" >> $GITHUB_STEP_SUMMARY
+          echo "**URL de Produção:** $TEST_URL" >> $GITHUB_STEP_SUMMARY
           echo "**Image Tag:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** $COMMIT_MSG" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Revisões" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          API_APP=$(jq -r '.apiAppName' .azure/deploy_state.json)
+          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
+          az containerapp revision list \
+            --name $API_APP \
+            --resource-group $RESOURCE_GROUP \
+            --query "[].{name:name,active:properties.active,trafficWeight:properties.trafficWeight,createdTime:properties.createdTime}" \
+            -o table >> $GITHUB_STEP_SUMMARY || echo "Erro ao listar revisões" >> $GITHUB_STEP_SUMMARY
