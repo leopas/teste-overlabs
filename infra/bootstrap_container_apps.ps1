@@ -30,10 +30,32 @@ if (-not (Test-Path $EnvFile)) {
     exit 1
 }
 
-# Gerar nomes de recursos
-$suffix = Get-Random -Minimum 100 -Maximum 999
+# Verificar se já existe deploy_state.json para reutilizar sufixo
+$suffix = $null
 if (-not $ResourceGroup) {
     $ResourceGroup = "rg-overlabs-$Stage"
+}
+
+# Tentar carregar sufixo existente do deploy_state.json
+$stateFile = ".azure/deploy_state.json"
+if (Test-Path $stateFile) {
+    try {
+        $existingState = Get-Content $stateFile | ConvertFrom-Json
+        if ($existingState.apiAppName) {
+            # Extrair sufixo do nome do Container App (formato: app-overlabs-prod-248)
+            if ($existingState.apiAppName -match "-(\d+)$") {
+                $suffix = [int]$matches[1]
+                Write-Host "[INFO] Reutilizando sufixo existente do deploy_state.json: $suffix" -ForegroundColor Cyan
+            }
+        }
+    } catch {
+        Write-Host "[AVISO] Não foi possível ler deploy_state.json existente, gerando novo sufixo" -ForegroundColor Yellow
+    }
+}
+
+# Se não encontrou sufixo existente, gerar um novo
+if (-not $suffix) {
+    $suffix = Get-Random -Minimum 100 -Maximum 999
 }
 
 $KeyVault = "kv-overlabs-$Stage-$suffix"
