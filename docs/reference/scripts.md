@@ -134,6 +134,82 @@ Inventário completo de todos os scripts disponíveis para gerenciar a infraestr
 
 ---
 
+### `run_ingest_in_container.ps1`
+
+**Propósito**: Executar ingestão dentro do container da API (recomendado).
+
+**Parâmetros**:
+- `-TruncateFirst` (flag): Truncar collection antes de indexar
+- `-VerifyDocs` (flag): Verificar se /app/DOC-IA existe antes de executar
+
+**Uso**:
+```powershell
+# Básico
+.\infra\run_ingest_in_container.ps1
+
+# Com truncate primeiro
+.\infra\run_ingest_in_container.ps1 -TruncateFirst
+
+# Verificar documentos antes
+.\infra\run_ingest_in_container.ps1 -VerifyDocs
+```
+
+**O que faz**:
+1. Verifica se `/app/DOC-IA` existe no container (volume montado)
+2. Verifica configuração de embeddings (OpenAI)
+3. Opcionalmente trunca a collection
+4. Executa `scan_docs` dentro do container
+5. Executa `ingest` dentro do container
+6. Usa Qdrant interno (não precisa tornar externo)
+
+**Vantagens**:
+- ✅ Usa documentos já montados no container
+- ✅ Acessa Qdrant interno (mais seguro)
+- ✅ Usa todas as variáveis de ambiente já configuradas
+- ✅ Não precisa copiar documentos manualmente
+- ✅ Não precisa tornar Qdrant externo
+
+---
+
+### `ingest_local_to_prod_qdrant.py`
+
+**Propósito**: Executar ingestão localmente apontando para Qdrant de produção (alternativa).
+
+**Parâmetros**:
+- `--qdrant-url` (string, opcional): URL do Qdrant (se não fornecido, obtém de deploy_state.json)
+- `--resource-group` (string, opcional): Resource Group (se não fornecido, lê de deploy_state.json)
+- `--qdrant-app-name` (string, opcional): Nome do Qdrant Container App (se não fornecido, lê de deploy_state.json)
+- `--docs-path` (string, default: "DOC-IA"): Caminho para documentos locais
+- `--truncate-first` (flag): Truncar collection antes de indexar
+- `--openai-api-key` (string, opcional): OpenAI API Key (se não fornecido, usa OPENAI_API_KEY do ambiente)
+
+**Uso**:
+```bash
+# Usando deploy_state.json
+python infra/ingest_local_to_prod_qdrant.py
+
+# Com truncate primeiro
+python infra/ingest_local_to_prod_qdrant.py --truncate-first
+
+# Fornecendo URL diretamente
+python infra/ingest_local_to_prod_qdrant.py --qdrant-url https://app-overlabs-qdrant-prod-248.azurecontainerapps.io
+```
+
+**O que faz**:
+1. Obtém URL do Qdrant de produção (via Azure CLI ou parâmetro)
+2. Opcionalmente trunca a collection
+3. Executa `scan_docs` localmente
+4. Executa `ingest` localmente apontando para Qdrant remoto
+5. Usa OpenAI embeddings (requer `OPENAI_API_KEY`)
+
+**Vantagens**:
+- Não precisa copiar documentos para o container
+- Usa documentos locais diretamente
+- Mais rápido para desenvolvimento/testes
+- Fácil de debugar localmente
+
+---
+
 ### `reset_qdrant_collection.ps1`
 
 **Propósito**: Dropar e recriar a collection do Qdrant em produção, reindexando todos os documentos.
