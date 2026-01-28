@@ -196,8 +196,8 @@ class MySQLTraceSink:
             finally:
                 try:
                     self._q.task_done()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("trace_queue_task_done_error", error=str(e), error_type=type(e).__name__)
 
     def _write(self, conn, trace: PipelineTrace) -> None:
         cur = conn.cursor()

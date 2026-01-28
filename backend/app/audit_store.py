@@ -163,8 +163,8 @@ class MySQLAuditSink:
         self._stop.set()
         try:
             self._thread.join(timeout=2.0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("audit_shutdown_thread_join_error", error=str(e), error_type=type(e).__name__)
 
     def _connect(self):
         """Reutiliza lógica de conexão de MySQLTraceSink."""
@@ -292,14 +292,14 @@ class MySQLAuditSink:
                 try:
                     if conn is not None:
                         conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("audit_connection_close_error", error=str(e), error_type=type(e).__name__)
                 conn = None
             finally:
                 try:
                     self._q.task_done()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("audit_queue_task_done_error", error=str(e), error_type=type(e).__name__)
 
     def _write_session(self, conn, session: AuditSession) -> None:
         cur = conn.cursor()
