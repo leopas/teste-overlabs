@@ -260,7 +260,24 @@ az containerapp ingress traffic set `
 
 ## Canary Deployment
 
-O pipeline GitHub Actions implementa **Canary Deployment** automaticamente para garantir deploys seguros.
+> **⚠️ STATUS TEMPORÁRIO**: Canary deployment está **DESABILITADO** temporariamente.
+> 
+> **Decisão**: Desabilitado em 2026-01-28 devido a problemas com verificação de readiness/replicas que estavam travando deploys em produção.
+> 
+> **Motivo**: 
+> - Verificações de replicas estavam dando timeout mesmo com containers funcionando
+> - Volume de documentos recém-adicionado pode estar causando delays na inicialização
+> - Necessário estabilizar configuração antes de reativar canary
+> 
+> **Modo Atual**: Deploy direto (100% tráfego imediatamente) com smoke test simples após 30s de espera.
+> 
+> **Reativação**: Quando volume de documentos e configuração estiverem estáveis, reativar canary com verificação mais tolerante.
+
+---
+
+### Como Funcionava (Desabilitado)
+
+O pipeline GitHub Actions implementava **Canary Deployment** automaticamente para garantir deploys seguros.
 
 ### Como Funciona
 
