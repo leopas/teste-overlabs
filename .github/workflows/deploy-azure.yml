@@ -22,6 +22,7 @@ permissions:
 env:
   ACR_NAME: acrchoperia
   IMAGE_NAME: choperia-api
+  CANARY_WEIGHT: 10  # 10% tráfego para nova revision no canary
 
 jobs:
   validate:
@@ -246,7 +247,30 @@ jobs:
             echo "  Permissão já existe"
           fi
       
+      - name: Capture previous active revision
+        id: capture_prev
+        run: |
+          echo "📋 Capturando revision ativa atual..."
+          API_APP="${{ steps.state.outputs.api_app }}"
+          RESOURCE_GROUP="${{ steps.state.outputs.resource_group }}"
+          
+          # Obter revision ativa atual (com tráfego)
+          PREV_REVISION=$(az containerapp revision list \
+            --name "$API_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "[?properties.active==\`true\`].name" -o tsv | head -n1)
+          
+          if [ -z "$PREV_REVISION" ]; then
+            echo "⚠️  Nenhuma revision ativa encontrada (primeiro deploy?)"
+            PREV_REVISION="none"
+          else
+            echo "  Revision anterior: $PREV_REVISION"
+          fi
+          
+          echo "prev_revision=$PREV_REVISION" >> $GITHUB_OUTPUT
+      
       - name: Update Container App with new image
+        id: update_app
         run: |
           echo "🚀 Atualizando Container App com nova imagem..."
           IMAGE_TAG=${{ github.sha }}
@@ -260,93 +284,166 @@ jobs:
             --image "$IMAGE_REF"
           
           echo "✅ Container App atualizado"
-      
-      - name: Wait for new revision
-        id: wait_revision
-        run: |
-          echo "⏳ Aguardando nova revisão ficar pronta (30s)..."
-          sleep 30
           
-          # Obter revisão mais recente
-          LATEST_REVISION=$(az containerapp revision list \
+          # Obter nova revision imediatamente após update
+          sleep 5  # Pequeno delay para revision aparecer
+          NEW_REVISION=$(az containerapp revision list \
             --name ${{ steps.state.outputs.api_app }} \
             --resource-group ${{ steps.state.outputs.resource_group }} \
             --query "sort_by(@, &properties.createdTime)[-1].name" -o tsv)
           
-          echo "  Revisão mais recente: $LATEST_REVISION"
-          echo "revision_name=$LATEST_REVISION" >> $GITHUB_OUTPUT
+          echo "  Nova revision criada: $NEW_REVISION"
+          echo "revision_name=$NEW_REVISION" >> $GITHUB_OUTPUT
       
-      - name: Set traffic to new revision
+      - name: Wait for revision readiness
+        id: wait_revision
         run: |
-          echo "🔄 Direcionando 100% do tráfego para nova revisão..."
-          REVISION_NAME="${{ steps.wait_revision.outputs.revision_name }}"
+          echo "⏳ Aguardando revision ficar pronta (polling)..."
+          chmod +x infra/ci/wait_revision_ready.sh
           
-          # Ativar a nova revisão (direciona 100% do tráfego automaticamente)
-          az containerapp revision activate \
-            --name ${{ steps.state.outputs.api_app }} \
-            --resource-group ${{ steps.state.outputs.resource_group }} \
-            --revision "$REVISION_NAME"
+          infra/ci/wait_revision_ready.sh \
+            "${{ steps.state.outputs.api_app }}" \
+            "${{ steps.state.outputs.resource_group }}" \
+            "${{ steps.update_app.outputs.revision_name }}" \
+            300
+      
+      - name: Apply canary traffic split
+        id: apply_canary
+        run: |
+          echo "🔄 Aplicando canary deployment..."
+          NEW_REV="${{ steps.update_app.outputs.revision_name }}"
+          PREV_REV="${{ steps.capture_prev.outputs.prev_revision }}"
+          CANARY_WEIGHT=${CANARY_WEIGHT:-10}
           
-          echo "✅ Tráfego direcionado para revisão: $REVISION_NAME"
-
-  smoke-test:
-    name: Smoke Test
-    runs-on: ubuntu-latest
-    needs: deploy
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          if [ "$PREV_REV" = "none" ]; then
+            echo "  Primeiro deploy: direcionando 100% para nova revision"
+            az containerapp ingress traffic set \
+              --name ${{ steps.state.outputs.api_app }} \
+              --resource-group ${{ steps.state.outputs.resource_group }} \
+              --revision-weight "${NEW_REV}=100"
+          else
+            PREV_WEIGHT=$((100 - CANARY_WEIGHT))
+            echo "  Canary: ${CANARY_WEIGHT}% nova revision, ${PREV_WEIGHT}% revision anterior"
+            az containerapp ingress traffic set \
+              --name ${{ steps.state.outputs.api_app }} \
+              --resource-group ${{ steps.state.outputs.resource_group }} \
+              --revision-weight "${NEW_REV}=${CANARY_WEIGHT}" "${PREV_REV}=${PREV_WEIGHT}"
+          fi
+          
+          echo "✅ Canary aplicado"
       
-      - name: Login to Azure
-        uses: azure/login@v1
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      
-      - name: Get API URL
+      - name: Get API URL for smoke test
         id: api_url
         run: |
-          API_APP=$(jq -r '.apiAppName' .azure/deploy_state.json)
-          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
+          API_APP="${{ steps.state.outputs.api_app }}"
+          RESOURCE_GROUP="${{ steps.state.outputs.resource_group }}"
           
           FQDN=$(az containerapp show \
-            --name $API_APP \
-            --resource-group $RESOURCE_GROUP \
+            --name "$API_APP" \
+            --resource-group "$RESOURCE_GROUP" \
             --query "properties.configuration.ingress.fqdn" -o tsv)
           
           TEST_URL="https://$FQDN"
           echo "test_url=$TEST_URL" >> $GITHUB_OUTPUT
           echo "API URL: $TEST_URL"
       
-      - name: Wait for deployment
+      - name: Wait for canary to stabilize
         run: |
-          echo "⏳ Aguardando 30s para deployment estabilizar..."
-          sleep 30
+          echo "⏳ Aguardando 15s para canary estabilizar..."
+          sleep 15
       
-      - name: Run smoke test
+      - name: Run smoke test on canary
+        id: smoke_test
         run: |
+          echo "🧪 Executando smoke test no canary (${CANARY_WEIGHT:-10}% tráfego)..."
+          echo "   Nota: Smoke test pode precisar de múltiplas tentativas para pegar o canary"
+          
           chmod +x infra/smoke_test.sh
-          infra/smoke_test.sh ${{ steps.api_url.outputs.test_url }} 30 5 2
+          # Aumentar retries para 10 (canary pode não pegar na primeira)
+          infra/smoke_test.sh "${{ steps.api_url.outputs.test_url }}" 30 10 2
+      
+      - name: Rollback on smoke test failure
+        if: failure() && steps.smoke_test.outcome == 'failure'
+        run: |
+          echo "❌ Smoke test falhou! Executando rollback automático..."
+          chmod +x infra/ci/rollback_revision.sh
+          
+          PREV_REV="${{ steps.capture_prev.outputs.prev_revision }}"
+          
+          if [ "$PREV_REV" != "none" ]; then
+            infra/ci/rollback_revision.sh \
+              "${{ steps.state.outputs.api_app }}" \
+              "${{ steps.state.outputs.resource_group }}" \
+              "$PREV_REV"
+          else
+            echo "⚠️  Não há revision anterior para fazer rollback (primeiro deploy)"
+          fi
+          
+          echo "❌ Deploy falhou devido a smoke test"
+          exit 1
+      
+      - name: Promote to 100%
+        if: success() && steps.smoke_test.outcome == 'success'
+        run: |
+          echo "✅ Smoke test passou! Promovendo para 100% do tráfego..."
+          NEW_REV="${{ steps.update_app.outputs.revision_name }}"
+          
+          az containerapp ingress traffic set \
+            --name ${{ steps.state.outputs.api_app }} \
+            --resource-group ${{ steps.state.outputs.resource_group }} \
+            --revision-weight "${NEW_REV}=100"
+          
+          echo "✅ Deploy concluído com sucesso!"
       
       - name: Deployment summary
+        if: always()
         env:
           TEST_URL: ${{ steps.api_url.outputs.test_url }}
           IMAGE_TAG: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
+          CANARY_WEIGHT: ${{ env.CANARY_WEIGHT }}
         run: |
-          echo "## ✅ Deploy Concluído" >> $GITHUB_STEP_SUMMARY
+          API_APP="${{ steps.state.outputs.api_app }}"
+          RESOURCE_GROUP="${{ steps.state.outputs.resource_group }}"
+          NEW_REV="${{ steps.update_app.outputs.revision_name }}"
+          PREV_REV="${{ steps.capture_prev.outputs.prev_revision }}"
+          
+          echo "## 🚀 Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.smoke_test.outcome }}" = "success" ]; then
+            echo "### ✅ Deploy Concluído com Sucesso" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Deploy Falhou" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**URL de Produção:** $TEST_URL" >> $GITHUB_STEP_SUMMARY
           echo "**Image Tag:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** $COMMIT_MSG" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Revisões" >> $GITHUB_STEP_SUMMARY
+          echo "**Revision Anterior:** \`$PREV_REV\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Nova Revision:** \`$NEW_REV\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Canary Weight:** ${CANARY_WEIGHT}%" >> $GITHUB_STEP_SUMMARY
+          echo "**Smoke Test:** ${{ steps.smoke_test.outcome }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          API_APP=$(jq -r '.apiAppName' .azure/deploy_state.json)
-          RESOURCE_GROUP=$(jq -r '.resourceGroup' .azure/deploy_state.json)
+          
+          echo "### 📊 Revisões Atuais" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           az containerapp revision list \
-            --name $API_APP \
-            --resource-group $RESOURCE_GROUP \
+            --name "$API_APP" \
+            --resource-group "$RESOURCE_GROUP" \
             --query "[].{name:name,active:properties.active,trafficWeight:properties.trafficWeight,createdTime:properties.createdTime}" \
             -o table >> $GITHUB_STEP_SUMMARY || echo "Erro ao listar revisões" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.smoke_test.outcome }}" != "success" ] && [ "$PREV_REV" != "none" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔄 Rollback Manual (se necessário)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "az containerapp ingress traffic set \\" >> $GITHUB_STEP_SUMMARY
+            echo "  --name $API_APP \\" >> $GITHUB_STEP_SUMMARY
+            echo "  --resource-group $RESOURCE_GROUP \\" >> $GITHUB_STEP_SUMMARY
+            echo "  --revision-weight ${PREV_REV}=100" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi

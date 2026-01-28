@@ -1,126 +1,179 @@
-# Segurança e controles
+# Segurança
 
-Guardrails, Prompt Firewall, política de PII, audit com criptografia e threat model (STRIDE lean). Tudo descrito **conforme existe no código**.
+O que o sistema bloqueia e como protege contra ataques.
 
----
+## Validação de Input
 
-## O que é
+### Implementação
 
-Camadas de proteção na entrada do `POST /ask`: **Prompt Firewall** (regex, opcional), **guardrails** (injection + sensitive/PII), **rate limit**. Na auditoria: hashes, redaction e criptografia condicional. Na ingestão: exclusão de PII/funcionários (R1).
+**Arquivo**: [`backend/app/schemas.py`](backend/app/schemas.py) (linhas 12-20)
 
----
+```python
+class AskRequest(BaseModel):
+    question: str = Field(..., min_length=3, max_length=2000)
 
-## Gates do request
+    @field_validator("question")
+    @classmethod
+    def no_control_chars(cls, v: str) -> str:
+        if _CONTROL_CHARS_RE.search(v):
+            raise ValueError("question contém caracteres de controle")
+        return v
+```
 
-Ordem executada (diagrama em [diagrams.md#g](diagrams.md#g-gates-de-segurança-request)):
+### Regras
 
-1. **Rate limit** (Redis): por IP, `RATE_LIMIT_PER_MINUTE`; excedido → REFUSAL.
-2. **Prompt Firewall** (se `PROMPT_FIREWALL_ENABLED`): regex sobre pergunta normalizada; match → REFUSAL, sem retriever/LLM.
-3. **Guardrails:** `detect_prompt_injection` → REFUSAL; `detect_sensitive_request` (CPF, cartão, senha/token/key, etc.) → REFUSAL.
-4. Resto do pipeline (cache, retrieval, LLM, quality).
+- **Tamanho**: 3-2000 caracteres
+- **Caracteres de controle**: Bloqueados (regex `[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]`)
 
----
-
-## Guardrails (entrada do /ask)
-
-### Injeção de prompt
-
-- **Onde:** `app.security.detect_prompt_injection` (regex).
-- **Padrões:** "ignore previous instructions", "reveal system prompt", "jailbreak", "BEGIN SYSTEM PROMPT", etc.
-- **Efeito:** REFUSAL, `refusal_reason=guardrail_injection`.
-
-### Sensível / PII na pergunta
-
-- **Onde:** `app.security.detect_sensitive_request`.
-- **Padrões:** CPF (formatado ou 11 dígitos), cartão (13–19 dígitos), "password", "senha", "token", "api_key", "secret", "conta bancária", etc.
-- **Efeito:** REFUSAL, `refusal_reason=guardrail_sensitive`.
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 140) - validação automática pelo FastAPI
 
 ---
 
-## Prompt Firewall (regex)
+## Detecção de Prompt Injection
 
-- **Onde:** `app.prompt_firewall`; regras em arquivo (`PROMPT_FIREWALL_RULES_PATH`, default `config/prompt_firewall.regex`).
-- **Conceito:** WAF de prompt; execução **antes** dos guardrails de injection/sensitive. Match → REFUSAL, sem retriever/LLM.
-- **Normalização:** NFKD, remove diacríticos, lower, colapsa whitespace (`normalize_for_firewall`).
-- **Categorias (por prefixo do rule_id):** INJECTION, EXFIL, SECRETS, PII, PAYLOAD.
-- **Atualizar regras:** editar o `.regex`; hot reload por `mtime` (throttle `PROMPT_FIREWALL_RELOAD_CHECK_SECONDS`). O enricher (`scripts/enrich_prompt_firewall.py`) gera propostas/validações/patches; **nunca** altera o arquivo diretamente.
-- **Métricas:** `firewall_rules_loaded`, `firewall_reload_total`, `firewall_checks_total`, `firewall_block_total`, `firewall_check_duration_seconds`.
+### Implementação
 
-Ver [prompt_firewall.md](prompt_firewall.md), [prompt_firewall_perf.md](prompt_firewall_perf.md), [prompt_firewall_enrichment.md](prompt_firewall_enrichment.md).
+**Arquivo**: [`backend/app/security.py`](backend/app/security.py) (linhas 59-76)
 
----
+```python
+def detect_prompt_injection(question: str) -> bool:
+    normalized = normalize_for_firewall_fallback(question)
+    return bool(_INJECTION_RE.search(normalized))
+```
 
-## Política de PII e R1 vs R2
+### Padrões Detectados
 
-### R1 (presente)
+**Regex**: [`backend/app/security.py`](backend/app/security.py) (linhas 11-21)
 
-- **Pergunta:** Guardrails bloqueiam CPF, cartão, senha/token na **entrada**.
-- **Ingestão:** Arquivos com CPF no conteúdo ou `funcionarios` no path são **ignorados** (`scripts.ingest` + `contains_cpf`).
-- **Audit:** Texto redigido (redaction) e hashes; bruto só sob condições (risk_only/always) e criptografado.
+- "ignore (all) previous instructions"
+- "disregard the system prompt"
+- "reveal the system prompt"
+- "show me your system prompt"
+- "jailbreak"
+- "begin system prompt" / "end system prompt"
+- "you are chatgpt"
+- "as an ai language model"
 
-### R2 (fora do escopo)
+### Normalização
 
-- Incluir documentos de funcionários na base vetorial.
-- Políticas mais granulares de PII (ex.: LGPD por finalidade).
+**Arquivo**: [`backend/app/security.py`](backend/app/security.py) (linhas 44-56)
 
----
+- NFKD normalization (remove diacríticos)
+- Lowercase
+- Collapse whitespace
 
-## Audit log e criptografia
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 350) - apenas quando Prompt Firewall está disabled
 
-### O que é persistido
-
-- **Sempre:** hashes (pergunta/resposta normalizados), `trace_id`, `request_id`, `session_id`, `user_id`, `answer_source`, `confidence`, `cache_hit`, `latency_ms`, `refusal_reason`, `abuse_risk_score`, `abuse_flags_json`.
-- **Com `AUDIT_LOG_INCLUDE_TEXT=1`:** texto **redigido** (redaction) de pergunta/resposta e, quando aplicável, excerpts dos chunks.
-- **Raw criptografado:** quando `AUDIT_LOG_RAW_MODE=always` ou (`risk_only` e `abuse_risk_score >= ABUSE_RISK_THRESHOLD`). AES-256-GCM; envelope JSON com `alg`, `kid`, `nonce_b64`, `ct_b64`.
-
-### Redaction
-
-- **Onde:** `app.redaction.redact_text`.
-- **Alvos:** CPF, cartão, Bearer token, API key/secret/password (palavras-chave), email, telefone.
-
-### AAD e replay
-
-- **AAD:** `AUDIT_ENC_AAD_MODE` = `trace_id` | `request_id` | `none`. `trace_id` amarra o ciphertext ao trace, reduzindo replay entre traces.
+**Nota**: Se Prompt Firewall estiver habilitado, usa regras regex do arquivo `config/prompt_firewall.regex` em vez deste fallback.
 
 ---
 
-## Configuração (env vars relevantes)
+## Bloqueio de Perguntas Sensíveis
 
-Apenas **nomes**; não usar valores reais em docs.
+### Implementação
 
-- `RATE_LIMIT_PER_MINUTE`
-- `PROMPT_FIREWALL_ENABLED`, `PROMPT_FIREWALL_RULES_PATH`, `PROMPT_FIREWALL_MAX_RULES`, `PROMPT_FIREWALL_RELOAD_CHECK_SECONDS`, `FIREWALL_LOG_SAMPLE_RATE`
-- `AUDIT_LOG_ENABLED`, `AUDIT_LOG_INCLUDE_TEXT`, `AUDIT_LOG_RAW_MODE`, `AUDIT_LOG_RAW_MAX_CHARS`, `AUDIT_LOG_REDACT`
-- `AUDIT_ENC_KEY_B64`, `AUDIT_ENC_AAD_MODE`
-- `ABUSE_CLASSIFIER_ENABLED`, `ABUSE_RISK_THRESHOLD`
-- **Nota**: O `abuse_classifier` agora usa o Prompt Firewall (`scan_for_abuse()`) para calcular `risk_score` e `flags` quando `PROMPT_FIREWALL_ENABLED=1`, mantendo apenas detecção de PII/sensível localmente. Ver [prompt_firewall.md](prompt_firewall.md#classificação-de-risco-scan_for_abuse).
+**Arquivo**: [`backend/app/security.py`](backend/app/security.py) (linha 79)
+
+```python
+def detect_sensitive_request(question: str) -> bool:
+    return bool(_CPF_RE.search(question) or _CARD_RE.search(question) or _SECRET_RE.search(question))
+```
+
+### Padrões Detectados
+
+**CPF**: [`backend/app/security.py`](backend/app/security.py) (linha 24)
+- Formato: `XXX.XXX.XXX-XX` ou `XXXXXXXXXXX` (11 dígitos)
+
+**Cartão**: [`backend/app/security.py`](backend/app/security.py) (linha 25)
+- 13-19 dígitos com espaços/hífens opcionais
+
+**Segredos**: [`backend/app/security.py`](backend/app/security.py) (linhas 26-31)
+- Palavras-chave: "password", "senha", "token", "api key", "secret", "private key", "ssh-rsa", "BEGIN PRIVATE KEY", "cartão", "cvv", "conta bancária", "agência", "banco"
+
+### Ação
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 360)
+
+- **Recusa imediata**: Não chama retriever nem LLM
+- **Motivo**: `guardrail_sensitive`
+- **Confiança**: 0.2 (recusa padrão)
 
 ---
 
-## Como validar
+## Prompt Firewall (Opcional)
 
-- **Guardrails:** `POST /ask` com "ignore previous instructions" ou "CPF 123.456.789-00" → 200 REFUSAL, `X-Answer-Source=REFUSAL`.
-- **Firewall:** Habilitar, regra que case na pergunta → REFUSAL; ver `firewall_block_total` em `/metrics`.
-- **Rate limit:** Exceder `RATE_LIMIT_PER_MINUTE` por IP → REFUSAL.
-- **Audit:** `TRACE_SINK=mysql`, `AUDIT_LOG_ENABLED=1`; consultar `audit_ask`, `audit_message`; ver [audit_logging.md](audit_logging.md).
+### Implementação
+
+**Arquivo**: [`backend/app/prompt_firewall.py`](backend/app/prompt_firewall.py)
+
+### Como funciona
+
+- **Regras regex**: Lidas de `config/prompt_firewall.regex`
+- **Hot reload**: Verifica mudanças no arquivo a cada 2 segundos (configurável)
+- **Normalização**: NFKD + remove diacríticos + lowercase + collapse whitespace
+- **Bloqueio**: Se regra casa, recusa imediatamente
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 315)
+
+**Configuração**: `PROMPT_FIREWALL_ENABLED=1` no `.env`
+
+**Nota**: Quando habilitado, substitui o fallback de prompt injection em `security.py`.
 
 ---
 
-## Threat model (STRIDE lean)
+## Rate Limiting
 
-| Vetor | Mitigação |
-|-------|------------|
-| **Prompt injection** | Guardrails (regex) + Prompt Firewall (regex). |
-| **Exfiltração** | Firewall, guardrails, recusa sem evidência; abuse classifier (usa Prompt Firewall via `scan_for_abuse()`) + raw opcional para análise. |
-| **Vazamento de PII** | Guardrails na pergunta; ingestão sem CPF/funcionários; redaction em audit; hashes em vez de texto quando possível. |
-| **Abuso / volume** | Rate limit; abuse classifier (integra Prompt Firewall para cálculo de risk_score); auditoria. |
-| **ReDoS (regex)** | Regras focadas; métricas `firewall_check_duration`; enricher com validação de performance. |
-| **Cache poisoning** | Cache key = SHA256 da pergunta normalizada; sem influência direta do cliente no valor cacheado. |
+### Implementação
+
+**Arquivo**: [`backend/app/cache.py`](backend/app/cache.py) (linhas 39-50)
+
+```python
+def rate_limit_allow(self, ip: str, limit_per_minute: int) -> bool:
+    epoch_min = int(time.time() // 60)
+    key = f"rl:{ip}:{epoch_min}"
+    pipe = self._client.pipeline()
+    pipe.incr(key, 1)
+    pipe.expire(key, 70)
+    count, _ = pipe.execute()
+    return int(count) <= int(limit_per_minute)
+```
+
+### Como funciona
+
+- **Limite padrão**: 60 requests/minuto por IP
+- **Chave Redis**: `rl:<ip>:<epochMinute>`
+- **Janela**: Fixa por minuto (não sliding window)
+- **Ação**: Se excedido, recusa com motivo `rate_limited`
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 274)
+
+**Configuração**: `RATE_LIMIT_PER_MINUTE=60` no `.env`
+
+---
+
+## Fluxo de Segurança
+
+**Arquivo**: [`backend/app/main.py`](backend/app/main.py) (linhas 262-370)
+
+1. **Validação input**: FastAPI valida automaticamente (linha 140)
+2. **Rate limiting**: Verifica limite por IP (linha 274)
+3. **Prompt Firewall**: Se habilitado, verifica regras regex (linha 315)
+4. **Prompt injection fallback**: Se firewall disabled, usa heurística (linha 350)
+5. **Sensitive request**: Verifica CPF, cartão, segredos (linha 360)
+6. **Se bloqueado**: Recusa imediatamente, não chama retriever/LLM
 
 ---
 
 ## Limitações
 
-- Guardrails e firewall são heurísticas (regex); não cobrem todos os vetores.
-- JWT não é validado; `user_id` extraído apenas para audit.
-- Criptografia de audit é “simples” (AES-GCM com chave estática); rotação e uso de HSM ficam para evolução.
+- **Prompt injection heurística**: Não é exaustiva, pode ter falsos negativos
+- **Rate limit simples**: Janela fixa permite bursts no início do minuto
+- **Sensitive detection**: Baseado em regex, pode ter falsos positivos/negativos
+- **Sem autenticação**: API não requer autenticação (assume ambiente controlado)
+
+---
+
+## Referências
+
+- [Controles de Qualidade](quality-controls.md) - Validação de respostas
+- [Arquitetura](architecture.md) - Visão geral do sistema

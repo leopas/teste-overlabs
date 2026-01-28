@@ -85,7 +85,7 @@ O GitHub Actions usa OIDC para autenticar na Azure **sem precisar de secrets**. 
 
 ```powershell
 # Execute o script que faz tudo automaticamente
-.\infra\setup_oidc.ps1 -GitHubOrg "seu-usuario-ou-org" -GitHubRepo "teste-overlabs"
+.\infra\setup_oidc.ps1 -GitHubOrg "leopas-ou-org" -GitHubRepo "teste-overlabs"
 ```
 
 O script:
@@ -104,7 +104,7 @@ Se preferir fazer manualmente, siga os passos em `docs/github_secrets_setup.md`.
 
 Após executar o script, adicione os seguintes secrets no GitHub:
 
-1. Vá para: `https://github.com/SEU-USUARIO/teste-overlabs/settings/secrets/actions`
+1. Vá para: `https://github.com/leopas/teste-overlabs/settings/secrets/actions`
 2. Adicione:
    - `AZURE_CLIENT_ID`: O Client ID do App Registration
    - `AZURE_TENANT_ID`: O Tenant ID
@@ -257,6 +257,116 @@ az containerapp ingress traffic set `
   --resource-group $state.resourceGroup `
   --revision-weight <REVISION_NOVA>=50 <REVISION_ANTIGA>=50
 ```
+
+## Canary Deployment
+
+O pipeline GitHub Actions implementa **Canary Deployment** automaticamente para garantir deploys seguros.
+
+### Como Funciona
+
+1. **Nova revision criada sem tráfego**: Ao atualizar a imagem, uma nova revision é criada automaticamente, mas sem receber tráfego inicial.
+
+2. **Polling de readiness**: O pipeline aguarda a revision ficar pronta usando polling inteligente (não sleep fixo), verificando:
+   - `provisioningState == "Succeeded"`
+   - `runningState == "Running"` (quando disponível)
+   - Replicas ready (se configurado)
+
+3. **Aplicar canary**: Divide o tráfego:
+   - **10%** para a nova revision (canary)
+   - **90%** para a revision anterior (produção)
+
+4. **Smoke test**: Executa smoke test no canary (com retries aumentados para pegar o 10% do tráfego).
+
+5. **Promover ou rollback**:
+   - **Se smoke test OK**: Promove 100% do tráfego para a nova revision
+   - **Se smoke test falha**: Rollback automático para a revision anterior (100% tráfego)
+
+### Vantagens
+
+- **Segurança**: Valida nova versão em produção antes de expor todos os usuários
+- **Rollback rápido**: Se houver problema, apenas 10% do tráfego é afetado
+- **Zero downtime**: Revision anterior continua servindo 90% do tráfego durante o teste
+- **Detecção precoce**: Problemas são detectados antes de promover 100%
+
+### Configuração
+
+O peso do canary é configurável via variável de ambiente no workflow:
+
+```yaml
+env:
+  CANARY_WEIGHT: 10  # 10% tráfego para nova revision
+```
+
+Para reduzir risco, pode diminuir para 5%:
+
+```yaml
+env:
+  CANARY_WEIGHT: 5  # 5% tráfego (mais conservador)
+```
+
+### Polling vs Sleep Fixo
+
+**Antes**: O pipeline usava `sleep 30` fixo, que podia ser muito ou pouco tempo.
+
+**Agora**: Usa polling inteligente que:
+- Verifica estado real da revision
+- Detecta quando está pronta (não espera desnecessariamente)
+- Detecta falhas imediatamente
+- Timeout configurável (default: 5 minutos)
+
+### Rollback Automático
+
+Se o smoke test falhar após aplicar o canary, o pipeline executa rollback automático:
+
+1. Restaura 100% do tráfego para a revision anterior
+2. Nova revision fica inativa (sem tráfego)
+3. Job falha com mensagem clara
+4. Summary mostra comandos de rollback manual (se necessário)
+
+### Troubleshooting Canary
+
+#### Revision não fica ready
+
+**Sintoma**: Polling timeout após 5 minutos
+
+**Solução**:
+1. Verificar logs do Container App:
+   ```powershell
+   az containerapp logs show `
+     --name $state.apiAppName `
+     --resource-group $state.resourceGroup `
+     --follow
+   ```
+2. Verificar estado da revision:
+   ```powershell
+   az containerapp revision show `
+     --name $state.apiAppName `
+     --resource-group $state.resourceGroup `
+     --revision <REVISION_NAME>
+   ```
+
+#### Smoke test falha no canary
+
+**Sintoma**: Smoke test retorna erro mesmo com canary aplicado
+
+**Possíveis causas**:
+- Smoke test não está pegando o canary (10% tráfego) - normal, retries aumentados ajudam
+- Nova revision tem bug real
+- Problemas de rede temporários
+
+**Solução**:
+1. Verificar se canary foi aplicado:
+   ```powershell
+   az containerapp revision list `
+     --name $state.apiAppName `
+     --resource-group $state.resourceGroup `
+     --query "[].{name:name,trafficWeight:properties.trafficWeight}" `
+     -o table
+   ```
+2. Verificar logs da nova revision
+3. Se necessário, fazer rollback manual (comandos no summary do GitHub Actions)
+
+Para mais detalhes sobre o pipeline, veja [docs/ci_cd.md](ci_cd.md).
 
 ## Observabilidade
 

@@ -1,0 +1,26 @@
+[
+  {
+    "method": "GET",
+    "path": "/healthz",
+    "function": "unknown",
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/readyz",
+    "function": "healthz",
+    "response_model": null
+  },
+  {
+    "method": "GET",
+    "path": "/metrics",
+    "function": "healthz",
+    "response_model": null
+  },
+  {
+    "method": "POST",
+    "path": "/ask",
+    "function": "healthz",
+    "response_model": "AskResponse"
+  }
+]

@@ -1,232 +1,350 @@
-## MVP RAG (FastAPI + Qdrant + Redis) — R1
+# teste-overlabs - Sistema RAG com Recusa Inteligente
 
-Backend com RAG e **recusa quando não há evidência**, priorizando documentos **mais confiáveis e mais recentes**. Funciona sem chave OpenAI (modo stub).
+> **⚠️ Aviso de Confidencialidade**: Este repositório é confidencial e destinado apenas para fins de avaliação. Veja [CONFIDENTIALITY.md](CONFIDENTIALITY.md) para detalhes.
 
-**Documentação para avaliadores (banca):** [docs/README.md](docs/README.md) — Guia do Avaliador, arquitetura, segurança, observabilidade, audit e runbook.
+Sistema RAG que responde perguntas sobre documentos internos com **recusa quando não há evidência suficiente**, priorizando documentos mais confiáveis e mais recentes.
 
-### Stack
-- **FastAPI** (`/ask`, `/healthz`, `/readyz`, `/metrics`, `/docs`)
-- **Qdrant** (vector DB)
-- **Redis** (cache + rate limit)
-- **Embeddings (default local, leve)**: `fastembed` (ONNX) com o modelo `sentence-transformers/all-MiniLM-L6-v2` (default) ou OpenAI (opcional)
-- **LLM**: OpenAI (opcional) ou **stub** (sem chave => recusa)
+### Titularidade e Contato
+**Titular/Mantenedor:** Leopoldo Carvalho Correia de Lima  
+**Contato:** leopoldo.de.lima@gmail.com  
+**Copyright:** © 2026 Leopoldo Carvalho Correia de Lima. Todos os direitos reservados.
 
-### Pré-requisitos
-- Docker + Docker Compose (no Windows, normalmente via Docker Desktop)
-- A pasta de documentos do desafio disponível no host (ex.: `C:/Projetos/teste-overlabs/DOC-IA`)
+---
 
-### Como rodar
-1) (Opcional) Crie um `.env` a partir de `env.example` e ajuste `DOCS_HOST_PATH`.
-   - Exemplo (Windows): `DOCS_HOST_PATH=C:/Projetos/teste-overlabs/DOC-IA`
-   - Porta padrão do Qdrant no host: `QDRANT_PORT=6335` (mude se já estiver em uso)
-   - Para **logs detalhados do pipeline** do `/ask`:
-     - `PIPELINE_LOG_ENABLED=1`
-     - (opcional) `PIPELINE_LOG_INCLUDE_TEXT=1` para logar **excerpts curtos** dos chunks (não loga chunks inteiros)
+## O que este sistema resolve
 
-2) Suba tudo:
+Em sistemas RAG, é crítico **não inventar respostas** quando não há evidência suficiente ou quando há conflitos entre documentos. Este sistema implementa:
 
-```bash
-docker compose up --build
+1. **Recusa inteligente**: Retorna mensagem padrão quando não há base suficiente, em vez de gerar resposta incorreta
+2. **Priorização de fontes**: Usa documentos mais confiáveis (`trust_score`) e mais recentes (`freshness_score`) para reduzir erros
+3. **Detecção de conflitos**: Identifica quando documentos conflitam (ex.: prazos diferentes) e recusa se não conseguir resolver
+
+**Implementação**: [`backend/app/main.py`](backend/app/main.py) (linhas 140-1071), [`backend/app/quality.py`](backend/app/quality.py)
+
+---
+
+## Arquitetura
+
+```mermaid
+flowchart TB
+    Client([Cliente])
+    API[FastAPI API<br/>:8000]
+    Redis[(Redis<br/>Cache + Rate Limit)]
+    Qdrant[(Qdrant<br/>Vector DB)]
+    LLM[LLM Provider<br/>OpenAI ou stub]
+    
+    Client -->|POST /ask| API
+    API -->|Cache lookup| Redis
+    API -->|Retrieval| Qdrant
+    API -->|Generate| LLM
+    API -->|Rate limit| Redis
 ```
 
-3) Acesse:
-- Swagger: `http://localhost:8000/docs`
-- Liveness: `http://localhost:8000/healthz`
-- Readiness: `http://localhost:8000/readyz`
-- Métricas: `http://localhost:8000/metrics`
+**Componentes**:
+1. **FastAPI** (`backend/app/main.py`): Endpoint `/ask`, validação, guardrails, cache, retrieval, LLM, qualidade
+2. **Qdrant** (`backend/app/retrieval.py`): Vector database, coleção `docs_chunks`, busca por similaridade
+3. **Redis** (`backend/app/cache.py`): Cache de respostas (SHA256 da pergunta) e rate limiting por IP
+4. **LLM** (`backend/app/llm.py`): OpenAI (se `OPENAI_API_KEY` configurada) ou stub determinístico
+5. **Embeddings** (`backend/app/retrieval.py`): fastembed local (ONNX) ou OpenAI embeddings
 
-### Como indexar documentos
-Os docs do host são montados em `/docs` dentro do container (via `DOCS_HOST_PATH` no compose).
+**Deploy**: Docker Compose local ou Azure Container Apps (ver [Como rodar](#como-rodar))
 
-1) Gerar relatório de layout:
+---
 
-```bash
-docker compose run --rm api python scripts/scan_docs.py
-```
+## Endpoint principal: POST /ask
 
-2) Ingerir e indexar:
-
-```bash
-docker compose run --rm api python scripts/ingest.py
-```
-
-### Auditabilidade e Rastreabilidade
-
-O sistema persiste rastreabilidade completa de todas as interações com `/ask`:
-
-- **Chat log completo**: Perguntas e respostas (user/assistant) com redação automática de PII
-- **Metadados técnicos**: Origem da resposta (CACHE/LLM/REFUSAL), latência, confiança, chunks retornados
-- **Classificação de abuso**: Score de risco e flags de detecção
-- **Criptografia opcional**: Texto bruto criptografado (AES-256-GCM) para casos de alto risco
-
-#### Headers de Resposta
-
-Todas as respostas do `/ask` incluem:
-
-- `X-Trace-ID`: ID único do trace (correlaciona com `trace_id` no DB)
-- `X-Answer-Source`: Origem da resposta (`CACHE`, `LLM`, ou `REFUSAL`)
-- `X-Chat-Session-ID`: ID da sessão de chat (persistido entre requests)
-
-#### Exemplo de Uso
-
-```python
-import httpx
-
-# Primeira chamada (gera session_id)
-response = httpx.post("http://localhost:8000/ask", json={"question": "Qual o prazo?"})
-session_id = response.headers["X-Chat-Session-ID"]
-trace_id = response.headers["X-Trace-ID"]
-answer_source = response.headers["X-Answer-Source"]
-
-print(f"Session: {session_id}, Trace: {trace_id}, Source: {answer_source}")
-
-# Segunda chamada (reutiliza session_id)
-response2 = httpx.post(
-    "http://localhost:8000/ask",
-    json={"question": "Qual a política?"},
-    headers={"X-Chat-Session-ID": session_id}
-)
-# session_id será o mesmo
-assert response2.headers["X-Chat-Session-ID"] == session_id
-```
-
-#### Configuração
-
-Para habilitar audit logging no MySQL, configure no `.env`:
-
-```bash
-AUDIT_LOG_ENABLED=1
-TRACE_SINK=mysql
-AUDIT_LOG_INCLUDE_TEXT=1
-AUDIT_LOG_RAW_MODE=risk_only  # off|risk_only|always
-AUDIT_ENC_KEY_B64=<chave_base64_32_bytes>  # Opcional para criptografia
-ABUSE_CLASSIFIER_ENABLED=1
-ABUSE_RISK_THRESHOLD=0.80
-
-# MySQL
-MYSQL_HOST=<host>
-MYSQL_PORT=3306
-MYSQL_DATABASE=<database>
-MYSQL_USER=<user>
-MYSQL_PASSWORD=<password>
-```
-
-Aplique o schema SQL:
-
-```bash
-# Dentro do container ou localmente com mysql client
-mysql -h <host> -u <user> -p <database> < docs/db_audit_schema.sql
-```
-
-**Documentação completa**: Veja [docs/audit_logging.md](docs/audit_logging.md) para:
-- Queries SQL úteis
-- Como gerar chave de criptografia
-- Retenção recomendada
-- Troubleshooting
-
-### Prompt Firewall (WAF de prompt)
-
-Camada opcional de regras regex em arquivo (`config/prompt_firewall.regex`) executada **antes** dos guardrails de injection/sensitive. Quando uma regra casa, a requisição é recusada (200, `sources=[]`) sem chamar retriever nem LLM. Hot reload por `mtime`; desabilitado por padrão.
-
-- Variáveis: `PROMPT_FIREWALL_ENABLED`, `PROMPT_FIREWALL_RULES_PATH`, etc. (veja `env.example`).
-- **Documentação**: [docs/prompt_firewall.md](docs/prompt_firewall.md).
-
-> R1 ingere apenas `.txt` e `.md`. Arquivos com indícios de PII (ex.: CPF) e/ou `funcionarios` no nome **são ignorados**.
-
-### Testar o `/ask`
-Exemplos (PowerShell):
-
-```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/ask -ContentType 'application/json' -Body '{"question":"Qual o prazo para reembolso de despesas nacionais?"}'
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/ask -ContentType 'application/json' -Body '{"question":"Qual o prazo de reembolso?"}'
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/ask -ContentType 'application/json' -Body '{"question":"Qual é o CPF da Maria Oliveira?"}'
-```
-
-### Como rodar testes (unit + prod-like)
-Instalar deps:
-
-```bash
-python -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
-```
-
-Rodar unit + fuzz (sem Docker):
-
-```bash
-cd backend
-pytest -q -m "not prodlike"
-pytest -q tests/property
-```
-
-Rodar prod-like (Qdrant+Redis reais via Docker):
-
-```bash
-docker compose -f docker-compose.test.yml up -d
-cd backend
-set QDRANT_URL=http://localhost:6336
-set REDIS_URL=redis://localhost:6380/0
-pytest -q -m prodlike
-cd ..
-docker compose -f docker-compose.test.yml down -v
-```
-
-Detalhes: veja [`docs/ci.md`](docs/ci.md).
-
-### Traceability (rastreabilidade)
-Cada chamada ao `POST /ask` gera um trace técnico correlacionado por:
-- `X-Request-ID`
-- `X-Trace-ID`
-- `user_id` (quando houver `Authorization: Bearer <JWT>` com claim `user_id`)
-
-Mais detalhes (OTel + MySQL sink opcional): [`docs/traceability.md`](docs/traceability.md).
-
-### Como o sistema evita “inventar”
-- **Somente** usa trechos recuperados do Qdrant como evidência.
-- Se não houver base suficiente, retorna recusa padrão (HTTP 200):
-
+**Request**:
 ```json
-{ "answer": "Não encontrei informações confiáveis para responder essa pergunta.", "confidence": 0.2, "sources": [] }
+{
+  "question": "Qual o prazo para reembolso de despesas nacionais?"
+}
 ```
 
-### Prioridade de fontes (conflitos)
-Cada chunk tem `trust_score` e `freshness_score`. Em conflitos (ex.: versões v1 vs v3), o sistema tenta resolver por **maior confiança e maior recência**; se continuar ambíguo, **recusa**.
+**Validação**: 3-2000 caracteres, sem caracteres de controle. Implementado em [`backend/app/schemas.py`](backend/app/schemas.py) (linhas 12-20).
 
-### Mecanismos de qualidade (4)
-- **A) Threshold**: se `confidence < 0.65` => recusa
-- **B) Validação cruzada**: só responde se:
-  - 2 fontes concordam, **ou**
-  - 1 fonte `POLICY/MANUAL` com `trust_score >= 0.85` e sem conflito
-- **C) Conflito não resolvido** => recusa
-- **D) Pós-validador**: se a resposta contém claims (ex.: números) não suportados pelos trechos => recusa
+**Response** (sucesso):
+```json
+{
+  "answer": "O prazo para reembolso de despesas nacionais é de 30 dias corridos...",
+  "confidence": 0.85,
+  "sources": [
+    {
+      "document": "politica-reembolso-v3.txt",
+      "excerpt": "Prazo de reembolso: 30 dias corridos para despesas nacionais..."
+    }
+  ]
+}
+```
 
-### Cache, custo, resiliência
-- **Cache**: sha256 da pergunta normalizada, TTL 10 min.
-- **Resiliência**: se Qdrant/Redis estiverem indisponíveis, `/readyz` falha; `/ask` **não quebra** (retorna recusa padrão).
+**Response** (recusa):
+```json
+{
+  "answer": "Não encontrei informações confiáveis para responder essa pergunta.",
+  "confidence": 0.2,
+  "sources": []
+}
+```
 
-### Monitoramento
-- Logs JSON (request_id, latency, cache_hit, refusal_reason, top_docs)
-- Métricas Prometheus em `/metrics`
-- OpenTelemetry opcional (ativável por env; sem collector não quebra)
+**Headers de resposta**:
+- `X-Answer-Source`: `CACHE`, `LLM`, ou `REFUSAL`
+- `X-Trace-ID`: ID único do trace (correlaciona com audit)
+- `X-Chat-Session-ID`: ID da sessão (persistido entre requests)
 
-### Limitações (R1)
-- Sem frontend (R2).
-- Sem ingestão de documentos de funcionários/PII (R2).
+**Código**: [`backend/app/main.py`](backend/app/main.py) (linha 140)
 
-### Roadmap (R2)
-- UI de chat + login
-- RBAC/ABAC por funcionário/unidade
-- PII masking + audit logs + políticas de retenção + criptografia
-- Filtros no Qdrant por permissões/atributos
+---
 
-### Deploy na Azure
+## Como decide responder vs recusar
 
-O projeto suporta deploy na Azure usando **Azure Container Apps**:
+O sistema aplica **4 controles de qualidade** em sequência:
 
-- **Documentação completa**: [`docs/deployment_azure.md`](docs/deployment_azure.md)
-- **Bootstrap automatizado**: `.\infra\bootstrap_container_apps.ps1`
-- **CI/CD**: GitHub Actions com OIDC (sem secrets no GitHub)
+### 1. Threshold de confiança
+**Regra**: Se `confidence < 0.65`, recusa.
 
-### Documentação adicional
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/deployment_azure.md`](docs/deployment_azure.md) - Guia completo de deploy na Azure
-- `docs/layout_report.md` (gerado pelo scan)
+**Implementação**: [`backend/app/quality.py`](backend/app/quality.py) (linha 105-106)
+```python
+def quality_threshold(confidence: float, threshold: float = 0.65) -> bool:
+    return confidence >= threshold
+```
 
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 850)
+
+### 2. Validação cruzada (cross-check)
+**Regra**: Responde apenas se:
+- **2+ fontes distintas concordam**, OU
+- **1 fonte POLICY/MANUAL com `trust_score >= 0.85`** e sem conflito
+
+**Implementação**: [`backend/app/quality.py`](backend/app/quality.py) (linhas 109-128)
+```python
+def cross_check_ok(doc_types, doc_paths, trust_scores, conflict) -> bool:
+    if conflict.has_conflict:
+        return False
+    distinct_docs = {p for p in doc_paths if p}
+    if len(distinct_docs) >= 2:
+        return True
+    if len(doc_types) == 1:
+        dt = (doc_types[0] or "").upper()
+        trust = trust_scores[0] if trust_scores else 0.0
+        if dt in {"POLICY", "MANUAL"} and trust >= 0.85:
+            return True
+    return False
+```
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 860)
+
+### 3. Detecção de conflitos
+**Regra**: Se há conflito irresolúvel (ex.: prazos diferentes no mesmo escopo), recusa.
+
+**Implementação**: [`backend/app/quality.py`](backend/app/quality.py) (linhas 22-82)
+- Detecta prazos em dias e datas `dd/mm/yyyy` por escopo (nacional/internacional/geral)
+- Se pergunta especifica escopo, só considera sentenças desse escopo
+- Conflito = mais de um valor diferente no mesmo escopo
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 810)
+
+### 4. Pós-validação
+**Regra**: Números citados na resposta devem existir nos trechos de evidência.
+
+**Implementação**: [`backend/app/quality.py`](backend/app/quality.py) (linhas 130-136)
+```python
+def post_validate_answer(answer: str, evidence_text: str) -> bool:
+    answer_nums = set(_NUM_RE.findall(answer))
+    if not answer_nums:
+        return True
+    ev_nums = set(_NUM_RE.findall(evidence_text))
+    return answer_nums.issubset(ev_nums)
+```
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 870)
+
+**Fluxo completo**: [`backend/app/main.py`](backend/app/main.py) (linhas 800-890)
+
+---
+
+## Como trata documentos conflitantes
+
+### Priorização
+1. **Re-rank por score combinado**: `final_score = (similarity * 0.6) + (trust_score * 0.4) + (freshness_score * 0.2)`
+2. **Seleção de evidência**: Limita tokens e seleciona top chunks por `final_score`
+
+**Implementação**: [`backend/app/retrieval.py`](backend/app/retrieval.py) (função `select_evidence`)
+
+### Resolução de conflitos
+1. **Detecção por escopo**: Nacional, internacional ou geral
+2. **Filtro por pergunta**: Se pergunta menciona "nacional", só considera sentenças nacionais
+3. **Conflito = múltiplos valores no mesmo escopo**: Ex.: "10 dias" e "30 dias" ambos para "nacional"
+
+**Implementação**: [`backend/app/quality.py`](backend/app/quality.py) (linhas 22-82)
+
+### Quando recusa
+- Conflito detectado E não consegue resolver (ex.: 2 valores diferentes no mesmo escopo)
+- Aplicado antes do LLM: [`backend/app/main.py`](backend/app/main.py) (linha 810)
+
+---
+
+## Controles de qualidade
+
+### 1. Threshold de confiança
+- **Onde**: [`backend/app/quality.py`](backend/app/quality.py) (linha 105)
+- **Threshold**: 0.65 (configurável)
+- **Quando aplica**: Após LLM gerar resposta
+
+### 2. Cross-check (validação cruzada)
+- **Onde**: [`backend/app/quality.py`](backend/app/quality.py) (linha 109)
+- **Regra**: 2+ fontes OU 1 fonte POLICY/MANUAL com trust >= 0.85
+- **Quando aplica**: Após threshold, antes de retornar
+
+### 3. Detecção de conflitos
+- **Onde**: [`backend/app/quality.py`](backend/app/quality.py) (linha 22)
+- **Escopos**: Nacional, internacional, geral
+- **Quando aplica**: Antes do LLM, após retrieval
+
+### 4. Pós-validação
+- **Onde**: [`backend/app/quality.py`](backend/app/quality.py) (linha 130)
+- **Regra**: Números na resposta devem existir na evidência
+- **Quando aplica**: Após LLM, antes de retornar
+
+**Documentação detalhada**: [docs/quality-controls.md](docs/quality-controls.md)
+
+---
+
+## Custo, performance e resiliência
+
+### Cache
+- **Onde**: [`backend/app/cache.py`](backend/app/cache.py) (linhas 12-37)
+- **Chave**: SHA256 da pergunta normalizada (strip, lower, collapse whitespace)
+- **TTL**: 600 segundos (10 minutos), configurável via `CACHE_TTL_SECONDS`
+- **Redução de custo**: Evita chamadas ao LLM e Qdrant para perguntas repetidas
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 380)
+
+### Rate limiting
+- **Onde**: [`backend/app/cache.py`](backend/app/cache.py) (linhas 39-50)
+- **Limite**: 60 requests/minuto por IP (configurável via `RATE_LIMIT_PER_MINUTE`)
+- **Chave**: `rl:<ip>:<epochMinute>`
+- **Redução de custo**: Limita abuso e chamadas desnecessárias
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 274)
+
+### Resiliência
+- **Qdrant/Redis indisponíveis**: `/readyz` retorna 503, mas `/ask` não quebra (retorna recusa padrão)
+- **Timeout Redis**: 1 segundo (socket_timeout), falha silenciosa
+- **Fallback LLM**: Se `OPENAI_API_KEY` não configurada, usa stub determinístico
+
+**Implementação**: [`backend/app/cache.py`](backend/app/cache.py) (linha 25), [`backend/app/main.py`](backend/app/main.py) (linha 118-134)
+
+**Documentação detalhada**: [docs/cost-performance.md](docs/cost-performance.md)
+
+---
+
+## Segurança
+
+### Validação de input
+- **Onde**: [`backend/app/schemas.py`](backend/app/schemas.py) (linhas 12-20)
+- **Regras**: 3-2000 caracteres, sem caracteres de controle
+- **Validação**: Pydantic com `field_validator`
+
+### Detecção de prompt injection
+- **Onde**: [`backend/app/security.py`](backend/app/security.py) (linhas 59-76)
+- **Método**: Regex heurística (fallback quando Prompt Firewall desabilitado)
+- **Padrões**: "ignore previous instructions", "reveal system prompt", "jailbreak", etc.
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 350) - apenas quando Prompt Firewall está disabled
+
+### Bloqueio de perguntas sensíveis
+- **Onde**: [`backend/app/security.py`](backend/app/security.py) (linha 79)
+- **Detecta**: CPF, números de cartão, palavras-chave de segredos
+- **Ação**: Recusa imediata, sem chamar retriever/LLM
+
+**Uso**: [`backend/app/main.py`](backend/app/main.py) (linha 360)
+
+**Documentação detalhada**: [docs/security.md](docs/security.md)
+
+---
+
+## Como rodar
+
+### Local (Docker Compose)
+
+1. **Configurar**:
+   ```bash
+   cp env.example .env
+   # Editar DOCS_HOST_PATH apontando para pasta de documentos
+   ```
+
+2. **Subir stack**:
+   ```bash
+   docker compose up --build
+   ```
+
+3. **Indexar documentos**:
+   ```bash
+   docker compose exec api python -m scripts.scan_docs
+   docker compose exec api python -m scripts.ingest
+   ```
+
+4. **Testar**:
+   ```bash
+   curl -X POST http://localhost:8000/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question": "Qual o prazo para reembolso?"}'
+   ```
+
+**Acesse**: http://localhost:8000/docs (Swagger UI)
+
+**Parar containers**:
+```bash
+# Windows
+.\infra\stop_all.ps1
+
+# Linux/Mac
+./infra/stop_all.sh
+```
+
+### Cloud (Azure Container Apps)
+
+**URL de produção**: `https://<fqdn-do-container-app>/ask`
+
+**Testar**:
+```bash
+curl -X POST https://<fqdn>/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Qual o prazo para reembolso?"}'
+```
+
+**Deploy**: Ver [docs/deployment_azure.md](docs/deployment_azure.md)
+
+---
+
+## Trade-offs e limitações
+
+### Trade-offs
+- **Recusa conservadora**: Pode recusar perguntas válidas se evidência não for suficiente (threshold 0.65)
+- **Conflitos apenas prazos/datas**: Não detecta outros tipos de conflito (ex.: valores monetários diferentes)
+- **Cache sem invalidação**: Cache expira apenas por TTL, não invalida quando documentos mudam
+- **Rate limit simples**: Janela fixa por minuto, pode permitir bursts no início do minuto
+
+### Limitações
+- **Sem frontend**: Apenas API REST
+- **Ingestão manual**: Documentos devem ser indexados via script (`scripts/ingest.py`)
+- **Embeddings locais limitados**: fastembed usa modelo pequeno (all-MiniLM-L6-v2), pode ter qualidade inferior a OpenAI
+- **Stub LLM**: Sem `OPENAI_API_KEY`, usa stub determinístico (não gera respostas reais)
+
+**Melhorias sugeridas**: Ver issues no repositório (se aplicável)
+
+---
+
+## Documentação detalhada
+
+- **[Arquitetura](docs/architecture.md)**: Diagramas e componentes
+- **[Controles de Qualidade](docs/quality-controls.md)**: Threshold, cross-check, conflitos, pós-validação
+- **[Segurança](docs/security.md)**: Validação, prompt injection, bloqueio sensível
+- **[Custo e Performance](docs/cost-performance.md)**: Cache, rate limiting, resiliência
+
+---
+
+## Links úteis
+
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Qdrant Documentation](https://qdrant.tech/documentation/)
+- [Azure Container Apps](https://learn.microsoft.com/azure/container-apps/)

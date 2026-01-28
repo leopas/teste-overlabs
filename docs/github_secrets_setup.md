@@ -5,11 +5,11 @@ Guia passo a passo para configurar os secrets necessários para o deploy na Azur
 ## Localização
 
 1. **Acesse seu repositório no GitHub**
-   - Exemplo: `https://github.com/seu-usuario/teste-overlabs`
+   - Exemplo: `https://github.com/leopas/teste-overlabs`
 
 2. **Vá para Settings**
    - Clique em **Settings** no topo da página do repositório
-   - Ou acesse diretamente: `https://github.com/seu-usuario/teste-overlabs/settings`
+   - Ou acesse diretamente: `https://github.com/leopas/teste-overlabs/settings`
 
 3. **Navegue até Secrets**
    - No menu lateral esquerdo, clique em **Secrets and variables**
@@ -17,7 +17,7 @@ Guia passo a passo para configurar os secrets necessários para o deploy na Azur
 
 4. **URL direta:**
    ```
-   https://github.com/<seu-usuario-ou-org>/teste-overlabs/settings/secrets/actions
+   https://github.com/<leopas-ou-org>/teste-overlabs/settings/secrets/actions
    ```
 
 ## Secrets Necessários

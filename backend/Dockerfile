@@ -23,6 +23,9 @@ COPY config /app/config
 # Criar diretório certs e copiar se existir
 RUN mkdir -p /app/certs
 COPY certs /app/certs
+# Copiar documentos para ingestão (DOC-IA)
+COPY DOC-IA /app/DOC-IA
+ENV DOCS_ROOT=/app/DOC-IA
 
 EXPOSE 8000
 

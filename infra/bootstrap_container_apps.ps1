@@ -197,18 +197,32 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "[OK] Storage Account já existe" -ForegroundColor Green
 }
 
-# Criar File Share
-Write-Host "[INFO] Verificando File Share..." -ForegroundColor Yellow
+# Criar File Shares (Qdrant e Documents)
+Write-Host "[INFO] Verificando File Shares..." -ForegroundColor Yellow
 $storageKey = az storage account keys list --account-name $StorageAccount --resource-group $ResourceGroup --query "[0].value" -o tsv
 $ErrorActionPreference = "Continue"
+
+# File Share para Qdrant
 $null = az storage share show --account-name $StorageAccount --account-key $storageKey --name $FileShare 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[INFO] Criando File Share..." -ForegroundColor Yellow
+    Write-Host "[INFO] Criando File Share para Qdrant..." -ForegroundColor Yellow
     az storage share create --account-name $StorageAccount --account-key $storageKey --name $FileShare --quota 100 | Out-Null
-    Write-Host "[OK] File Share criado" -ForegroundColor Green
+    Write-Host "[OK] File Share para Qdrant criado" -ForegroundColor Green
 } else {
-    Write-Host "[OK] File Share já existe" -ForegroundColor Green
+    Write-Host "[OK] File Share para Qdrant já existe" -ForegroundColor Green
 }
+
+# File Share para documentos
+$DocsFileShare = "documents"
+$null = az storage share show --account-name $StorageAccount --account-key $storageKey --name $DocsFileShare 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[INFO] Criando File Share para documentos..." -ForegroundColor Yellow
+    az storage share create --account-name $StorageAccount --account-key $storageKey --name $DocsFileShare --quota 10 | Out-Null
+    Write-Host "[OK] File Share para documentos criado" -ForegroundColor Green
+} else {
+    Write-Host "[OK] File Share para documentos já existe" -ForegroundColor Green
+}
+
 $ErrorActionPreference = "Stop"
 Write-Host ""
 
@@ -362,6 +376,36 @@ Write-Host "  QDRANT_URL: $qdrantUrl" -ForegroundColor Gray
 Write-Host "  REDIS_URL: $redisUrl" -ForegroundColor Gray
 Write-Host ""
 
+# 9.5. Configurar volume de documentos no Environment
+Write-Host "[INFO] Configurando volume de documentos no Environment..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
+$docsStorageExists = az containerapp env storage show `
+    --name $Environment `
+    --resource-group $ResourceGroup `
+    --storage-name documents-storage 2>&1 | Out-Null
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[INFO] Criando volume de documentos..." -ForegroundColor Yellow
+    az containerapp env storage set `
+        --name $Environment `
+        --resource-group $ResourceGroup `
+        --storage-name documents-storage `
+        --azure-file-account-name $StorageAccount `
+        --azure-file-account-key $storageKey `
+        --azure-file-share-name $DocsFileShare `
+        --access-mode ReadWrite 2>&1 | Out-Null
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Volume de documentos configurado" -ForegroundColor Green
+    } else {
+        Write-Host "[AVISO] Falha ao configurar volume de documentos. Continuando sem volume..." -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "[OK] Volume de documentos já existe" -ForegroundColor Green
+}
+$ErrorActionPreference = "Stop"
+Write-Host ""
+
 # 10. API Container App
 Write-Host "[INFO] Verificando API Container App..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
@@ -392,7 +436,8 @@ if ($LASTEXITCODE -ne 0) {
     # Construir env-vars
     $envVars = @(
         "QDRANT_URL=$qdrantUrl",
-        "REDIS_URL=$redisUrl"
+        "REDIS_URL=$redisUrl",
+        "DOCS_ROOT=/app/DOC-IA"
     )
     
     foreach ($key in $nonSecrets.Keys) {
@@ -405,31 +450,140 @@ if ($LASTEXITCODE -ne 0) {
         $envVars += "$key=@Microsoft.KeyVault(SecretUri=https://$KeyVault.vault.azure.net/secrets/$kvName/)"
     }
     
-    # Criar Container App
+    # Obter environment ID e subscription ID
+    $envId = az containerapp env show --name $Environment --resource-group $ResourceGroup --query id -o tsv
+    $subscriptionId = az account show --query id -o tsv
+    
+    # Criar Container App com volume usando YAML
+    Write-Host "  [INFO] Criando Container App com volume de documentos..." -ForegroundColor Cyan
+    
     $acrLoginServer = az acr show --name $AcrName --query loginServer -o tsv
     $acrUsername = az acr credential show --name $AcrName --query username -o tsv
     $acrPassword = az acr credential show --name $AcrName --query passwords[0].value -o tsv
     
-    az containerapp create `
-        --name $ApiApp `
-        --resource-group $ResourceGroup `
-        --environment $Environment `
-        --image "$acrLoginServer/choperia-api:latest" `
-        --registry-server $acrLoginServer `
-        --registry-username $acrUsername `
-        --registry-password $acrPassword `
-        --target-port 8000 `
-        --ingress external `
-        --cpu 2.0 `
-        --memory 4.0Gi `
-        --min-replicas 1 `
-        --max-replicas 5 `
-        --env-vars $envVars 2>&1 | Out-Null
+    # Construir YAML para Container App com volume
+    # Construir lista de env vars formatada
+    $envVarsYaml = ""
+    foreach ($envVar in $envVars) {
+        $parts = $envVar -split '=', 2
+        $name = $parts[0]
+        $value = $parts[1]
+        # Escapar aspas duplas no valor
+        $value = $value -replace '"', '\"'
+        $envVarsYaml += "      - name: $name`n        value: `"$value`"`n"
+    }
     
-    Write-Host "[OK] API Container App criado" -ForegroundColor Green
+    $yamlContent = @"
+properties:
+  environmentId: $envId
+  configuration:
+    ingress:
+      external: true
+      targetPort: 8000
+      transport: http
+    registries:
+    - server: $acrLoginServer
+      username: $acrUsername
+      passwordSecretRef: acr-password
+    secrets:
+    - name: acr-password
+      value: $acrPassword
+  template:
+    containers:
+    - name: api
+      image: $acrLoginServer/choperia-api:latest
+      env:
+$envVarsYaml      resources:
+        cpu: 2.0
+        memory: 4.0Gi
+      volumeMounts:
+      - volumeName: documents-storage
+        mountPath: /app/DOC-IA
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+    volumes:
+    - name: documents-storage
+      storageType: AzureFile
+      storageName: documents-storage
+"@
+    
+    $tempYaml = [System.IO.Path]::GetTempFileName() + ".yaml"
+    $yamlContent | Out-File -FilePath $tempYaml -Encoding utf8 -NoNewline
+    
+    try {
+        az containerapp create `
+            --name $ApiApp `
+            --resource-group $ResourceGroup `
+            --yaml $tempYaml 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] API Container App criado com volume de documentos" -ForegroundColor Green
+        } else {
+            Write-Host "[AVISO] Erro ao criar com YAML. Tentando sem volume..." -ForegroundColor Yellow
+            # Fallback: criar sem volume
+            az containerapp create `
+                --name $ApiApp `
+                --resource-group $ResourceGroup `
+                --environment $Environment `
+                --image "$acrLoginServer/choperia-api:latest" `
+                --registry-server $acrLoginServer `
+                --registry-username $acrUsername `
+                --registry-password $acrPassword `
+                --target-port 8000 `
+                --ingress external `
+                --cpu 2.0 `
+                --memory 4.0Gi `
+                --min-replicas 1 `
+                --max-replicas 5 `
+                --env-vars $envVars 2>&1 | Out-Null
+            Write-Host "[AVISO] Container App criado sem volume. Configure manualmente via portal." -ForegroundColor Yellow
+        }
+    } finally {
+        Remove-Item $tempYaml -Force -ErrorAction SilentlyContinue
+    }
 } else {
     Write-Host "[OK] API Container App já existe" -ForegroundColor Green
+    Write-Host "[INFO] Para adicionar volume, atualize manualmente via portal ou recrie o Container App" -ForegroundColor Yellow
 }
+Write-Host ""
+
+# 10.5. Upload de documentos para Azure Files
+Write-Host "[INFO] Verificando upload de documentos..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
+$localDocsPath = "DOC-IA"
+if (Test-Path $localDocsPath) {
+    Write-Host "[INFO] Fazendo upload de documentos para Azure Files..." -ForegroundColor Cyan
+    
+    # Listar arquivos existentes
+    $existingFiles = az storage file list `
+        --account-name $StorageAccount `
+        --account-key $storageKey `
+        --share-name $DocsFileShare `
+        --query "[].name" -o tsv 2>$null
+    
+    if ($existingFiles) {
+        Write-Host "[INFO] File Share já contém arquivos. Pulando upload." -ForegroundColor Yellow
+        Write-Host "  Para re-upload, delete os arquivos manualmente ou use: az storage file delete-batch" -ForegroundColor Gray
+    } else {
+        # Upload dos documentos
+        az storage file upload-batch `
+            --account-name $StorageAccount `
+            --account-key $storageKey `
+            --source $localDocsPath `
+            --destination $DocsFileShare 2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Documentos enviados para Azure Files" -ForegroundColor Green
+        } else {
+            Write-Host "[AVISO] Falha ao fazer upload. Você pode fazer manualmente depois." -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "[AVISO] Diretório local '$localDocsPath' não encontrado. Pulando upload." -ForegroundColor Yellow
+    Write-Host "  Faça upload manual depois usando: az storage file upload-batch" -ForegroundColor Gray
+}
+$ErrorActionPreference = "Stop"
 Write-Host ""
 
 # 11. Salvar deploy_state.json
