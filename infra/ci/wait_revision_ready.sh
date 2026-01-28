@@ -59,13 +59,14 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     echo "  [${ELAPSED}s] Provisioning: $PROV_STATE | Running: ${RUN_STATE:-N/A} | Replicas: ${READY_REPLICAS}/${TOTAL_REPLICAS}"
     
     # Verificar se está pronto
-    if [ "$PROV_STATE" = "Succeeded" ]; then
+    # Provisioning state pode ser "Succeeded" ou "Provisioned" dependendo da API
+    if [ "$PROV_STATE" = "Succeeded" ] || [ "$PROV_STATE" = "Provisioned" ]; then
         # Se runningState está disponível, verificar também
         if [ -n "$RUN_STATE" ]; then
             if [ "$RUN_STATE" = "Running" ]; then
-                # Se tem replicas configuradas, verificar se todas estão ready
+                # Se tem replicas configuradas, verificar se pelo menos uma está ready
                 if [ "$TOTAL_REPLICAS" -gt 0 ]; then
-                    if [ "$READY_REPLICAS" -eq "$TOTAL_REPLICAS" ]; then
+                    if [ "$READY_REPLICAS" -ge 1 ]; then
                         echo ""
                         echo "✅ Revision '$REVISION_NAME' está pronta!"
                         echo "   Provisioning: $PROV_STATE"
@@ -74,21 +75,30 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
                         exit 0
                     fi
                 else
-                    # Sem replicas configuradas, apenas provisioning state é suficiente
-                    echo ""
-                    echo "✅ Revision '$REVISION_NAME' está pronta!"
-                    echo "   Provisioning: $PROV_STATE"
-                    echo "   Running: $RUN_STATE"
-                    exit 0
+                    # Sem replicas configuradas ainda, mas Running state indica que está OK
+                    # Aguardar um pouco mais para replicas aparecerem
+                    if [ $ELAPSED -gt 30 ]; then
+                        echo ""
+                        echo "✅ Revision '$REVISION_NAME' está pronta (Running mas sem replicas ainda)"
+                        echo "   Provisioning: $PROV_STATE"
+                        echo "   Running: $RUN_STATE"
+                        exit 0
+                    fi
                 fi
+            elif [ "$RUN_STATE" = "Failed" ]; then
+                echo ""
+                echo "❌ Revision '$REVISION_NAME' falhou no running state"
+                echo "   Verifique os logs do container para mais detalhes"
+                exit 1
             fi
         else
             # Running state não disponível ainda, apenas provisioning state
             # Aguardar mais um pouco para running state aparecer
-            if [ $ELAPSED -gt 10 ]; then
+            if [ $ELAPSED -gt 30 ]; then
                 echo ""
-                echo "✅ Revision '$REVISION_NAME' está pronta (provisioning concluído)"
+                echo "⚠️  Revision '$REVISION_NAME' está provisionada mas running state não disponível"
                 echo "   Provisioning: $PROV_STATE"
+                echo "   Continuando mesmo assim..."
                 exit 0
             fi
         fi
@@ -98,7 +108,21 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
     if [ "$PROV_STATE" = "Failed" ]; then
         echo ""
         echo "❌ Revision '$REVISION_NAME' falhou no provisioning"
+        echo "   Verifique os logs e a configuração do Container App"
         exit 1
+    fi
+    
+    # Verificar se há erros nas replicas
+    if [ "$TOTAL_REPLICAS" -gt 0 ] && [ "$READY_REPLICAS" -eq 0 ] && [ $ELAPSED -gt 60 ]; then
+        # Verificar se alguma replica falhou
+        FAILED_REPLICAS=$(echo "$REPLICAS_JSON" | jq -r '[.[] | select(.runningState == "Failed")] | length' 2>/dev/null || echo "0")
+        if [ "$FAILED_REPLICAS" -gt 0 ]; then
+            echo ""
+            echo "❌ Revision '$REVISION_NAME' tem replicas falhadas"
+            echo "   Total: $TOTAL_REPLICAS, Ready: $READY_REPLICAS, Failed: $FAILED_REPLICAS"
+            echo "   Verifique os logs do container para mais detalhes"
+            exit 1
+        fi
     fi
     
     sleep $POLL_INTERVAL

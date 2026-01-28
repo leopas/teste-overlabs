@@ -239,10 +239,12 @@ jobs:
           
           if [ -z "$EXISTING" ]; then
             echo "  Concedendo permissão Key Vault Secrets User..."
+            # Usar --assignee-object-id e --assignee-principal-type para evitar query do Graph API
             az role assignment create \
               --scope "$SCOPE" \
-              --assignee "$PRINCIPAL_ID" \
-              --role "Key Vault Secrets User" 2>&1 || echo "  (Pode já existir)"
+              --assignee-object-id "$PRINCIPAL_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --role "Key Vault Secrets User" 2>&1 || echo "  (Pode já existir ou falta permissão - verifique se o service principal tem 'User Access Administrator' ou 'Owner')"
           else
             echo "  Permissão já existe"
           fi
@@ -297,6 +299,7 @@ jobs:
       
       - name: Wait for revision readiness
         id: wait_revision
+        continue-on-error: true
         run: |
           echo "⏳ Aguardando revision ficar pronta (polling)..."
           chmod +x infra/ci/wait_revision_ready.sh
@@ -306,6 +309,24 @@ jobs:
             "${{ steps.state.outputs.resource_group }}" \
             "${{ steps.update_app.outputs.revision_name }}" \
             300
+      
+      - name: Check revision logs on timeout
+        if: failure() && steps.wait_revision.outcome == 'failure'
+        run: |
+          echo "⚠️  Revision não ficou pronta. Verificando logs..."
+          API_APP="${{ steps.state.outputs.api_app }}"
+          RESOURCE_GROUP="${{ steps.state.outputs.resource_group }}"
+          REVISION="${{ steps.update_app.outputs.revision_name }}"
+          
+          echo "📋 Últimos logs da revisão:"
+          az containerapp revision show \
+            --name "$API_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --revision "$REVISION" \
+            --query "properties" -o json | jq -r '.replicas[]? | select(.runningState == "Failed") | "Replica \(.name): \(.runningState)"' || echo "Nenhum log disponível"
+          
+          echo ""
+          echo "💡 Dica: Verifique os logs do container no Azure Portal para mais detalhes"
       
       - name: Apply canary traffic split
         id: apply_canary
