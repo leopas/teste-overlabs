@@ -1,6 +1,6 @@
-# Deploy na Azure App Service via GitHub Actions
+# Deploy na Azure Container Apps via GitHub Actions
 
-Guia completo para deploy do sistema RAG na Azure usando Azure App Service com multi-container (docker-compose), GitHub Actions com OIDC, Key Vault para secrets, e Azure Files para persistência.
+Guia completo para deploy do sistema RAG na Azure usando **Azure Container Apps**, GitHub Actions com OIDC, Key Vault para secrets, e Azure Files para persistência.
 
 ## Índice
 
@@ -9,22 +9,33 @@ Guia completo para deploy do sistema RAG na Azure usando Azure App Service com m
 3. [Configurar OIDC (Federated Credentials)](#configurar-oidc-federated-credentials)
 4. [Bootstrap da Infraestrutura](#bootstrap-da-infraestrutura)
 5. [Como Funciona a Pipeline](#como-funciona-a-pipeline)
-6. [Rollback](#rollback)
-7. [Observabilidade](#observabilidade)
-8. [Troubleshooting](#troubleshooting)
+6. [Atualizar Container Apps](#atualizar-container-apps)
+7. [Rollback e Revisões](#rollback-e-revisões)
+8. [Observabilidade](#observabilidade)
+9. [Troubleshooting](#troubleshooting)
 
 ## Arquitetura
 
 O deploy utiliza:
 
-- **Azure App Service (Linux)**: Multi-container com docker-compose
-  - API (FastAPI): Container principal
-  - Qdrant: Vector database
-  - Redis: Cache e rate limiting
-- **Azure Container Registry (ACR)**: `acrchoperia` - armazenamento de imagens
+- **Azure Container Apps**: Orquestração de containers como microserviços
+  - **API Container App**: FastAPI (externa, porta 8000)
+  - **Qdrant Container App**: Vector database (interna, porta 6333)
+  - **Redis Container App**: Cache e rate limiting (interna, porta 6379)
+- **Azure Container Registry (ACR)**: Armazenamento de imagens Docker
 - **Azure Key Vault**: Armazenamento seguro de secrets
-- **Azure Files**: Persistência para Qdrant (montado em `/mnt/qdrant`)
+- **Azure Files**: Persistência para Qdrant (volume montado)
+- **Container Apps Environment**: Ambiente isolado para os containers
 - **GitHub Actions**: CI/CD com OIDC (sem secrets no GitHub)
+
+### Vantagens do Container Apps
+
+✅ **Rede Interna**: Containers se comunicam via DNS interno (sem expor Qdrant/Redis)  
+✅ **Volumes Persistentes**: Qdrant com Azure Files montado  
+✅ **Auto-scaling**: Escala automática por container  
+✅ **Revisões/Rollbacks**: Cada container app tem revisões independentes  
+✅ **Melhor Isolamento**: Cada serviço é independente e pode escalar separadamente  
+✅ **Zero-downtime Deployments**: Revisões permitem blue-green deployments nativos
 
 ### Fluxo de Deploy
 
@@ -34,11 +45,11 @@ flowchart LR
     GH -->|trigger| WF[GitHub Actions]
     WF -->|OIDC| AZ[Azure]
     WF -->|build| ACR[ACR]
-    WF -->|deploy| STG[Staging Slot]
-    WF -->|smoke test| TEST[Smoke Test]
-    TEST -->|pass| SWAP[Swap]
-    SWAP -->|swap| PROD[Production]
-    PROD -->|smoke test| FINAL[Final Test]
+    WF -->|deploy| REV[Nova Revisão]
+    REV -->|smoke test| TEST[Smoke Test]
+    TEST -->|pass| TRAF[Traffic Split]
+    TRAF -->|100%| PROD[Production]
+    PROD -->|rollback| OLD[Revisão Anterior]
 ```
 
 ## Pré-requisitos
@@ -56,23 +67,13 @@ curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 az --version
 ```
 
-### 2. Python 3.12+
-
-```bash
-python --version  # Deve ser 3.12 ou superior
-```
-
-### 3. Permissões na Azure
+### 2. Permissões na Azure
 
 Você precisa de uma das seguintes roles na subscription:
 - **Owner**
 - **Contributor** + **User Access Administrator**
 
-### 4. ACR Existente
-
-O ACR `acrchoperia` deve existir (ou será criado pelo bootstrap se tiver permissões).
-
-### 5. Arquivo .env
+### 3. Arquivo .env
 
 Crie um arquivo `.env` na raiz do projeto com todas as variáveis necessárias (veja `env.example`).
 
@@ -84,7 +85,6 @@ O GitHub Actions usa OIDC para autenticar na Azure **sem precisar de secrets**. 
 
 ```powershell
 # Execute o script que faz tudo automaticamente
-# Ele cria o Resource Group se não existir
 .\infra\setup_oidc.ps1 -GitHubOrg "seu-usuario-ou-org" -GitHubRepo "teste-overlabs"
 ```
 
@@ -93,678 +93,349 @@ O script:
 - Cria o App Registration
 - Cria o Service Principal
 - Concede permissões (Contributor no RG, AcrPush no ACR se existir)
-- Cria federated credentials
+- Cria federated credentials para branches, tags e environments
 - Mostra os valores para adicionar no GitHub Secrets
 
 ### Opção Manual: Passo a Passo
 
-### Passo 1: Obter Informações do GitHub
+Se preferir fazer manualmente, siga os passos em `docs/github_secrets_setup.md`.
 
-1. Vá para seu repositório GitHub
-2. Settings → Actions → General
-3. Anote o **Repository ID** (ex: `123456789`)
+### Configurar Secrets no GitHub
 
-### Passo 2: Criar App Registration no Azure AD
+Após executar o script, adicione os seguintes secrets no GitHub:
 
-#### PowerShell (Windows)
-
-```powershell
-# Login na Azure
-az login
-
-# Criar App Registration
-$APP_NAME = "github-actions-rag-overlabs"
-$APP_ID = az ad app create --display-name $APP_NAME --query appId -o tsv
-Write-Host "App ID: $APP_ID"
-
-# Criar Service Principal
-$SP_ID = az ad sp create --id $APP_ID --query id -o tsv
-Write-Host "Service Principal ID: $SP_ID"
-
-# Dar permissões (Contributor no Resource Group)
-$RESOURCE_GROUP = "rg-overlabs-prod"
-$SUBSCRIPTION_ID = az account show --query id -o tsv
-az role assignment create `
-  --role "Contributor" `
-  --assignee $SP_ID `
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP"
-
-# Dar permissão para ACR (AcrPush)
-$ACR_NAME = "acrchoperia"
-az role assignment create `
-  --role "AcrPush" `
-  --assignee $SP_ID `
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ContainerRegistry/registries/$ACR_NAME"
-```
-
-#### Bash (Linux/macOS/WSL)
-
-```bash
-# Login na Azure
-az login
-
-# Criar App Registration
-APP_NAME="github-actions-rag-overlabs"
-APP_ID=$(az ad app create --display-name "$APP_NAME" --query appId -o tsv)
-echo "App ID: $APP_ID"
-
-# Criar Service Principal
-SP_ID=$(az ad sp create --id $APP_ID --query id -o tsv)
-echo "Service Principal ID: $SP_ID"
-
-# Dar permissões (Contributor no Resource Group)
-RESOURCE_GROUP="rg-overlabs-prod"
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-az role assignment create \
-  --role "Contributor" \
-  --assignee $SP_ID \
-  --scope /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP
-
-# Dar permissão para ACR (AcrPush)
-ACR_NAME="acrchoperia"
-az role assignment create \
-  --role "AcrPush" \
-  --assignee $SP_ID \
-  --scope /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ContainerRegistry/registries/$ACR_NAME
-```
-
-### Passo 3: Configurar Federated Credentials
-
-#### PowerShell (Windows)
-
-```powershell
-# Substituir valores
-$GITHUB_ORG = "seu-org"  # ou seu usuário se repo pessoal
-$GITHUB_REPO = "teste-overlabs"
-$GITHUB_REPO_ID = "123456789"  # Repository ID do GitHub (obter em Settings → General)
-$SUBSCRIPTION_ID = az account show --query id -o tsv
-
-# Criar federated credential para branch main
-$mainParams = @{
-    name = "github-actions-main"
-    issuer = "https://token.actions.githubusercontent.com"
-    subject = "repo:$GITHUB_ORG/$GITHUB_REPO`:ref:refs/heads/main"
-    audiences = @("api://AzureADTokenExchange")
-} | ConvertTo-Json -Compress
-
-az ad app federated-credential create `
-  --id $APP_ID `
-  --parameters $mainParams
-
-# Criar federated credential para tags
-$tagsParams = @{
-    name = "github-actions-tags"
-    issuer = "https://token.actions.githubusercontent.com"
-    subject = "repo:$GITHUB_ORG/$GITHUB_REPO`:ref:refs/tags/*"
-    audiences = @("api://AzureADTokenExchange")
-} | ConvertTo-Json -Compress
-
-az ad app federated-credential create `
-  --id $APP_ID `
-  --parameters $tagsParams
-```
-
-#### Bash (Linux/macOS/WSL)
-
-```bash
-# Substituir valores
-GITHUB_ORG="seu-org"  # ou seu usuário se repo pessoal
-GITHUB_REPO="teste-overlabs"
-GITHUB_REPO_ID="123456789"  # Repository ID do GitHub
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-
-# Criar federated credential para branch main
-az ad app federated-credential create \
-  --id $APP_ID \
-  --parameters '{
-    "name": "github-actions-main",
-    "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:'$GITHUB_ORG'/'$GITHUB_REPO':ref:refs/heads/main",
-    "audiences": ["api://AzureADTokenExchange"]
-  }'
-
-# Criar federated credential para tags
-az ad app federated-credential create \
-  --id $APP_ID \
-  --parameters '{
-    "name": "github-actions-tags",
-    "issuer": "https://token.actions.githubusercontent.com",
-    "subject": "repo:'$GITHUB_ORG'/'$GITHUB_REPO':ref:refs/tags/*",
-    "audiences": ["api://AzureADTokenExchange"]
-  }'
-```
-
-### Passo 4: Configurar Secrets no GitHub
-
-**IMPORTANTE**: Com OIDC, você só precisa dos IDs, não das chaves!
-
-#### Como acessar a página de Secrets:
-
-1. **No seu repositório GitHub**, vá para:
-   - Clique no nome do repositório (ex: `teste-overlabs`)
-   - Clique em **Settings** (no topo da página, ao lado de "Insights")
-   - No menu lateral esquerdo, vá em **Secrets and variables** → **Actions**
-
-   **Ou acesse diretamente:**
-   ```
-   https://github.com/<seu-usuario-ou-org>/teste-overlabs/settings/secrets/actions
-   ```
-
-2. **Obter os valores necessários:**
-
-   **PowerShell:**
-   ```powershell
-   # Obter Tenant ID e Subscription ID
-   az account show --query "{tenantId:tenantId, subscriptionId:id}" -o table
-   
-   # Ou individualmente:
-   $TENANT_ID = az account show --query tenantId -o tsv
-   $SUBSCRIPTION_ID = az account show --query id -o tsv
-   Write-Host "Tenant ID: $TENANT_ID"
-   Write-Host "Subscription ID: $SUBSCRIPTION_ID"
-   
-   # O CLIENT_ID é o APP_ID que você obteve no Passo 2
-   # (o valor de $APP_ID)
-   ```
-   
-   **Bash:**
-   ```bash
-   # Obter Tenant ID e Subscription ID
-   az account show --query "{tenantId:tenantId, subscriptionId:id}" -o table
-   
-   # Ou individualmente:
-   az account show --query tenantId -o tsv
-   az account show --query id -o tsv
-   
-   # O CLIENT_ID é o APP_ID que você obteve no Passo 2
-   # (o valor de $APP_ID)
-   ```
-
-3. **Adicionar os Secrets:**
-
-   Na página de Secrets, clique em **"New repository secret"** e adicione:
-
-   - **Name:** `AZURE_CLIENT_ID`
-     - **Value:** O `APP_ID` obtido no Passo 2 (ex: `12345678-1234-1234-1234-123456789012`)
-
-   - **Name:** `AZURE_TENANT_ID`
-     - **Value:** O Tenant ID da sua subscription (ex: `87654321-4321-4321-4321-210987654321`)
-
-   - **Name:** `AZURE_SUBSCRIPTION_ID`
-     - **Value:** O Subscription ID (ex: `11111111-2222-3333-4444-555555555555`)
-
-4. **Verificar:**
-
-   Após adicionar, você deve ver os 3 secrets listados:
-   - `AZURE_CLIENT_ID` (visível apenas como `***`)
-   - `AZURE_TENANT_ID` (visível apenas como `***`)
-   - `AZURE_SUBSCRIPTION_ID` (visível apenas como `***`)
-
-**NÃO** adicione `AZURE_CLIENT_SECRET` - OIDC não precisa de client secret!
-
-#### Screenshot da localização:
-
-```
-Repositório GitHub
-  └─ Settings (topo da página)
-      └─ Secrets and variables (menu lateral)
-          └─ Actions
-              └─ New repository secret (botão)
-```
+1. Vá para: `https://github.com/SEU-USUARIO/teste-overlabs/settings/secrets/actions`
+2. Adicione:
+   - `AZURE_CLIENT_ID`: O Client ID do App Registration
+   - `AZURE_TENANT_ID`: O Tenant ID
+   - `AZURE_SUBSCRIPTION_ID`: O Subscription ID
 
 ## Bootstrap da Infraestrutura
 
-O script `infra/bootstrap_azure.py` cria toda a infraestrutura de forma idempotente.
+O script `bootstrap_container_apps.ps1` cria toda a infraestrutura necessária de forma idempotente.
 
 ### Executar Bootstrap
 
-**PowerShell:**
 ```powershell
-# Validar .env primeiro (opcional)
-python infra/validate_env.py --env .env --show-classification
+# Bootstrap completo (usa deploy_state.json se já existir)
+.\infra\bootstrap_container_apps.ps1 -EnvFile ".env" -Stage "prod" -Location "brazilsouth"
 
-# Executar bootstrap
-python infra/bootstrap_azure.py --env .env --stage prod --location brazilsouth
-```
-
-**Bash:**
-```bash
-# Validar .env primeiro (opcional)
-python infra/validate_env.py --env .env --show-classification
-
-# Executar bootstrap
-python infra/bootstrap_azure.py --env .env --stage prod --location brazilsouth
+# Ou com parâmetros customizados
+.\infra\bootstrap_container_apps.ps1 `
+  -ResourceGroup "rg-overlabs-prod" `
+  -AcrName "acrchoperia" `
+  -EnvFile ".env" `
+  -Stage "prod" `
+  -Location "brazilsouth"
 ```
 
 ### O que o Bootstrap Cria
 
-1. **Resource Group**: `rg-overlabs-prod`
-2. **ACR**: `acrchoperia` (reutiliza se existir)
-3. **Key Vault**: `kv-overlabs-prod-XXX` (suffix random)
-4. **App Service Plan**: `asp-overlabs-prod-XXX` (Linux, Standard S1 - suporta slots)
-5. **Web App**: `app-overlabs-prod-XXX` (Linux, multi-container)
-6. **Storage Account**: `saoverlabsprodXXX` (Azure Files)
-7. **File Share**: `qdrant-storage`
-8. **Staging Slot**: `staging`
+1. ✅ **Resource Group**
+2. ✅ **Azure Container Registry (ACR)**: `acrchoperia` (ou o nome especificado)
+3. ✅ **Azure Key Vault**: Para armazenar secrets
+4. ✅ **Azure Container Apps Environment**: Ambiente isolado
+5. ✅ **Redis Container App**: Cache interno (ingress interno)
+6. ✅ **Qdrant Container App**: Vector database interno com volume persistente (ingress interno)
+7. ✅ **API Container App**: API principal (ingress externo)
+8. ✅ **Azure Files**: Volume persistente para Qdrant
+9. ✅ **Secrets no Key Vault**: Upload automático dos secrets do `.env`
+10. ✅ **deploy_state.json**: Metadados dos recursos criados
 
-### O que o Bootstrap Configura
+### Variáveis de Ambiente Configuradas
 
-- **Managed Identity**: Habilitado na Web App
-- **Key Vault Permissions**: Get/List secrets para Managed Identity
-- **App Settings**: 
-  - Secrets → Key Vault references (`@Microsoft.KeyVault(SecretUri=...)`)
-  - Non-secrets → Valores diretos
-- **Azure Files Mount**: `/mnt/qdrant` para persistência do Qdrant
+O bootstrap configura automaticamente:
 
-### Estado de Deploy
+- **QDRANT_URL**: `http://app-overlabs-qdrant-prod-XXX:6333` (DNS interno)
+- **REDIS_URL**: `redis://app-overlabs-redis-prod-XXX:6379/0` (DNS interno)
+- **Variáveis não-secretas**: Do arquivo `.env`
+- **Secrets**: Key Vault references (`@Microsoft.KeyVault(...)`)
 
-Após o bootstrap, o arquivo `.azure/deploy_state.json` é criado com metadados (sem secrets):
+### Após o Bootstrap
+
+O script salva um arquivo `.azure/deploy_state.json` com metadados:
 
 ```json
 {
-  "subscriptionId": "...",
-  "tenantId": "...",
   "resourceGroup": "rg-overlabs-prod",
-  "location": "brazilsouth",
   "acrName": "acrchoperia",
-  "keyVaultName": "kv-overlabs-prod-123",
-  "appServiceName": "app-overlabs-prod-123",
-  ...
+  "keyVaultName": "kv-overlabs-prod-XXX",
+  "environmentName": "env-overlabs-prod-XXX",
+  "apiAppName": "app-overlabs-prod-XXX",
+  "qdrantAppName": "app-overlabs-qdrant-prod-XXX",
+  "redisAppName": "app-overlabs-redis-prod-XXX",
+  "storageAccountName": "saoverlabsprodXXX",
+  "fileShareName": "qdrant-storage"
 }
 ```
 
-**IMPORTANTE**: Este arquivo é gitignored. Não commite!
-
-### Upgrade do App Service Plan para Standard
-
-O bootstrap agora cria planos com **Standard S1** por padrão (suporta slots). Se você já tem um plano Basic e quer fazer upgrade:
-
-**Script Automatizado (Recomendado):**
-
-```powershell
-# Obter nomes do deploy_state.json
-$state = Get-Content .azure/deploy_state.json | ConvertFrom-Json
-.\infra\upgrade_to_standard.ps1 -AppServicePlanName $state.appServicePlanName -ResourceGroup $state.resourceGroup
-```
-
-O script irá:
-1. Verificar o SKU atual
-2. Fazer upgrade de Basic (B1) para Standard (S1)
-3. Criar o staging slot automaticamente (se ainda não existir)
-
-**Manual:**
-
-```powershell
-# 1. Fazer upgrade
-az appservice plan update --name asp-overlabs-prod-XXX --resource-group rg-overlabs-prod --sku S1
-
-# 2. Criar staging slot
-az webapp deployment slot create --name app-overlabs-prod-XXX --resource-group rg-overlabs-prod --slot staging --configuration-source app-overlabs-prod-XXX
-```
-
-**Nota**: O upgrade aumenta o custo mensal. Standard S1 é mais caro que Basic B1, mas permite:
-- Deployment slots (blue-green deployment)
-- Auto-scaling
-- Melhor performance
-
 ## Como Funciona a Pipeline
 
-A pipeline `.github/workflows/deploy-azure.yml` executa automaticamente em:
+A pipeline do GitHub Actions (`.github/workflows/deploy-azure.yml`) executa:
 
+1. **Build**: Build da imagem da API usando Docker
+2. **Security Scanning**: Trivy (imagens), Bandit (Python), pip-audit (dependências), Semgrep (SAST)
+3. **Push para ACR**: Tag por SHA do commit
+4. **Deploy**: Cria nova revisão do Container App da API
+5. **Smoke Test**: Testa `/healthz` e `/readyz`
+6. **Traffic Split**: Se passar, direciona 100% do tráfego para a nova revisão
+
+### Trigger
+
+A pipeline é acionada por:
 - Push para `main`
-- Tags `v*`
-- Manual (workflow_dispatch)
+- Tags `v*` (ex: `v1.0.0`)
+- Manual via `workflow_dispatch`
 
-### Jobs da Pipeline
+## Atualizar Container Apps
 
-1. **validate**: Valida `.env` e verifica `deploy_state.json`
-2. **build**: 
-   - Build da imagem API
-   - Push para ACR (tags: `latest`, `${GITHUB_SHA}`)
-   - Scan com Trivy (falha em CVEs HIGH/CRITICAL)
-3. **deploy-staging**: 
-   - Gera `docker-compose.deploy.yml` com `IMAGE_TAG=${GITHUB_SHA}`
-   - Deploy no slot staging
-   - Restart do slot
-4. **smoke-staging**: 
-   - Aguarda 30s
-   - Testa `/healthz` e `/readyz` no staging
-   - Falha se não passar
-5. **swap**: 
-   - Swap staging → production (apenas se smoke passar)
-6. **smoke-prod**: 
-   - Testa produção após swap
-   - Gera summary no GitHub
+### Atualizar API Container App
 
-### Concurrency
-
-A pipeline usa `concurrency.group` para evitar deploys paralelos:
-- Novos commits cancelam runs anteriores
-- Apenas um deploy por vez
-
-## Rollback
-
-### Opção 1: Redeploy com Tag Anterior
-
-**PowerShell:**
 ```powershell
-# Listar tags disponíveis
-az acr repository show-tags --name acrchoperia --repository choperia-api --output table
+# Carregar deploy state
+$state = Get-Content .azure/deploy_state.json | ConvertFrom-Json
 
-# Fazer deploy manual com tag específica
-$IMAGE_TAG = "<commit-sha-anterior>"
-$composeContent = Get-Content docker-compose.azure.yml -Raw
-$composeContent = $composeContent -replace '\$\{IMAGE_TAG:-latest\}', $IMAGE_TAG
-$composeContent | Out-File -FilePath docker-compose.deploy.yml -Encoding utf8
-
-az webapp config container set `
-  --name app-overlabs-prod-XXX `
-  --resource-group rg-overlabs-prod `
-  --multicontainer-config-type compose `
-  --multicontainer-config-file docker-compose.deploy.yml
+# Atualizar com nova imagem
+az containerapp update `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --image "$($state.acrName).azurecr.io/choperia-api:latest"
 ```
 
-**Bash:**
-```bash
-# Listar tags disponíveis
-az acr repository show-tags --name acrchoperia --repository choperia-api --output table
+### Atualizar Variáveis de Ambiente
 
-# Fazer deploy manual com tag específica
-IMAGE_TAG="<commit-sha-anterior>"
-az webapp config container set \
-  --name app-overlabs-prod-XXX \
-  --resource-group rg-overlabs-prod \
-  --multicontainer-config-type compose \
-  --multicontainer-config-file <(sed "s/\${IMAGE_TAG:-latest}/$IMAGE_TAG/g" docker-compose.azure.yml)
-```
-
-### Opção 2: Swap de Volta
-
-Se o swap foi feito recentemente, você pode fazer swap de volta:
-
-**PowerShell:**
 ```powershell
-az webapp deployment slot swap `
-  --resource-group rg-overlabs-prod `
-  --name app-overlabs-prod-XXX `
-  --slot staging `
-  --target-slot production
+# Adicionar/atualizar variável
+az containerapp update `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --set-env-vars "NOVA_VARIAVEL=valor"
 ```
 
-**Bash:**
-```bash
-az webapp deployment slot swap \
-  --resource-group rg-overlabs-prod \
-  --name app-overlabs-prod-XXX \
-  --slot staging \
-  --target-slot production
+### Usar Key Vault References
+
+```powershell
+# Configurar variável com Key Vault reference
+az containerapp update `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --set-env-vars "OPENAI_API_KEY=@Microsoft.KeyVault(SecretUri=https://$($state.keyVaultName).vault.azure.net/secrets/openai-api-key/)"
 ```
 
-**Nota**: Isso só funciona se o staging ainda tiver a versão anterior.
+## Rollback e Revisões
 
-### Opção 3: Reverter via GitHub
+Container Apps mantém revisões de cada deploy, permitindo rollback fácil:
 
-1. Vá para Actions → Deploy to Azure
-2. Encontre o último deploy bem-sucedido
-3. Clique em "Re-run jobs" → Selecione o job `swap`
-4. Isso fará swap de volta (se staging ainda tiver versão anterior)
+### Listar Revisões
+
+```powershell
+$state = Get-Content .azure/deploy_state.json | ConvertFrom-Json
+
+az containerapp revision list `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --query "[].{name:name,active:properties.active,trafficWeight:properties.trafficWeight,createdTime:properties.createdTime}" `
+  -o table
+```
+
+### Fazer Rollback
+
+```powershell
+# Ativar revisão anterior (100% do tráfego)
+az containerapp revision activate `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --revision <REVISION_NAME>
+```
+
+### Traffic Split (Blue-Green)
+
+```powershell
+# Dividir tráfego entre revisões (ex: 50% nova, 50% antiga)
+az containerapp ingress traffic set `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --revision-weight <REVISION_NOVA>=50 <REVISION_ANTIGA>=50
+```
 
 ## Observabilidade
 
-### Logs do App Service
+### Logs
 
-**PowerShell:**
 ```powershell
-# Logs em tempo real
-az webapp log tail `
-  --name app-overlabs-prod-XXX `
-  --resource-group rg-overlabs-prod
+# Logs em tempo real da API
+az containerapp logs show `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --follow
 
-# Logs do container específico
-az webapp log tail `
-  --name app-overlabs-prod-XXX `
-  --resource-group rg-overlabs-prod `
-  --container api
-```
-
-**Bash:**
-```bash
-# Logs em tempo real
-az webapp log tail \
-  --name app-overlabs-prod-XXX \
-  --resource-group rg-overlabs-prod
-
-# Logs do container específico
-az webapp log tail \
-  --name app-overlabs-prod-XXX \
-  --resource-group rg-overlabs-prod \
-  --container api
+# Logs do Qdrant
+az containerapp logs show `
+  --name $state.qdrantAppName `
+  --resource-group $state.resourceGroup `
+  --follow
 ```
 
 ### Métricas
 
-Acesse no Portal Azure:
-- App Service → Metrics
-- Métricas disponíveis: CPU, Memory, Requests, Response Time
+Acesse o portal Azure:
+- Container Apps → Seu App → Monitoring → Metrics
 
 ### Application Insights (Opcional)
 
-Para observabilidade avançada, configure Application Insights:
+Para integração com Application Insights, configure no Container Apps Environment:
 
-**PowerShell:**
 ```powershell
-# Criar Application Insights
-az monitor app-insights component create `
-  --app app-insights-overlabs `
-  --location brazilsouth `
-  --resource-group rg-overlabs-prod
-
-# Conectar ao App Service
-$APPINSIGHTS_KEY = az monitor app-insights component show `
-  --app app-insights-overlabs `
-  --resource-group rg-overlabs-prod `
-  --query instrumentationKey -o tsv
-
-az webapp config appsettings set `
-  --name app-overlabs-prod-XXX `
-  --resource-group rg-overlabs-prod `
-  --settings APPINSIGHTS_INSTRUMENTATIONKEY=$APPINSIGHTS_KEY
-```
-
-**Bash:**
-```bash
-# Criar Application Insights
-az monitor app-insights component create \
-  --app app-insights-overlabs \
-  --location brazilsouth \
-  --resource-group rg-overlabs-prod
-
-# Conectar ao App Service
-APPINSIGHTS_KEY=$(az monitor app-insights component show \
-  --app app-insights-overlabs \
-  --resource-group rg-overlabs-prod \
-  --query instrumentationKey -o tsv)
-
-az webapp config appsettings set \
-  --name app-overlabs-prod-XXX \
-  --resource-group rg-overlabs-prod \
-  --settings APPINSIGHTS_INSTRUMENTATIONKEY=$APPINSIGHTS_KEY
+az containerapp env update `
+  --name $state.environmentName `
+  --resource-group $state.resourceGroup `
+  --app-insights <INSTRUMENTATION_KEY>
 ```
 
 ## Troubleshooting
 
-### Pipeline falha em "Login to Azure"
+### Container App não inicia
 
-**Problema**: Erro de autenticação OIDC
-
-**Solução**:
-1. Verificar se federated credentials estão configuradas corretamente
-2. Verificar se `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` estão nos secrets do GitHub
-3. Verificar permissões do Service Principal (Contributor + AcrPush)
-
-### Build falha com "unauthorized"
-
-**Problema**: Sem permissão para push no ACR
+**Problema**: Container App fica em estado "Not Running"
 
 **Solução**:
-**PowerShell:**
-```powershell
-# Dar permissão AcrPush ao Service Principal
-$SP_ID = "<SP_ID>"
-$SUB_ID = az account show --query id -o tsv
-az role assignment create `
-  --role "AcrPush" `
-  --assignee $SP_ID `
-  --scope "/subscriptions/$SUB_ID/resourceGroups/rg-overlabs-prod/providers/Microsoft.ContainerRegistry/registries/acrchoperia"
-```
+1. Verificar logs: `az containerapp logs show --name <app-name> --resource-group <rg>`
+2. Verificar variáveis de ambiente
+3. Verificar se a imagem existe no ACR
+4. Verificar recursos (CPU/memória) do Container App
 
-**Bash:**
-```bash
-# Dar permissão AcrPush ao Service Principal
-az role assignment create \
-  --role "AcrPush" \
-  --assignee <SP_ID> \
-  --scope /subscriptions/<SUB_ID>/resourceGroups/rg-overlabs-prod/providers/Microsoft.ContainerRegistry/registries/acrchoperia
-```
+### Erro 503 na API
 
-### Deploy falha com "container not found"
-
-**Problema**: Imagem não existe no ACR
+**Problema**: API retorna 503
 
 **Solução**:
-1. Verificar se build passou
-2. Verificar tags no ACR: `az acr repository show-tags --name acrchoperia --repository choperia-api`
-3. Verificar se `IMAGE_TAG` está correto no compose
-
-### Smoke test falha
-
-**Problema**: `/healthz` ou `/readyz` não respondem
-
-**Solução**:
-1. Verificar logs: `az webapp log tail --name app-overlabs-prod-XXX --resource-group rg-overlabs-prod`
-2. Verificar se containers estão rodando: Portal Azure → App Service → Container settings
-3. Verificar App Settings (especialmente `QDRANT_URL`, `REDIS_URL`)
-4. Verificar se Azure Files mount está configurado
+1. Verificar se Qdrant e Redis estão rodando:
+   ```powershell
+   az containerapp show --name $state.qdrantAppName --resource-group $state.resourceGroup --query "properties.runningStatus"
+   az containerapp show --name $state.redisAppName --resource-group $state.resourceGroup --query "properties.runningStatus"
+   ```
+2. Verificar URLs internas (QDRANT_URL, REDIS_URL)
+3. Verificar logs da API
 
 ### Key Vault references não funcionam
 
-**Problema**: App Settings com `@Microsoft.KeyVault(...)` retornam erro
+**Problema**: Variáveis com `@Microsoft.KeyVault(...)` retornam erro
 
 **Solução**:
-1. Verificar Managed Identity está habilitado: `az webapp identity show --name app-overlabs-prod-XXX --resource-group rg-overlabs-prod`
-2. Verificar permissões no Key Vault: `az keyvault show --name kv-overlabs-prod-XXX --query properties.accessPolicies`
-3. Verificar se secret existe: `az keyvault secret list --vault-name kv-overlabs-prod-XXX`
+1. Verificar Managed Identity está habilitado no Container App:
+   ```powershell
+   az containerapp identity show --name $state.apiAppName --resource-group $state.resourceGroup
+   ```
+2. Se não estiver, habilitar:
+   ```powershell
+   az containerapp identity assign --name $state.apiAppName --resource-group $state.resourceGroup
+   ```
+3. Conceder permissões no Key Vault:
+   ```powershell
+   $principalId = az containerapp identity show --name $state.apiAppName --resource-group $state.resourceGroup --query principalId -o tsv
+   az role assignment create `
+     --scope "/subscriptions/<SUB_ID>/resourceGroups/$($state.resourceGroup)/providers/Microsoft.KeyVault/vaults/$($state.keyVaultName)" `
+     --assignee $principalId `
+     --role "Key Vault Secrets User"
+   ```
 
 ### Qdrant não persiste dados
 
 **Problema**: Dados são perdidos após restart
 
 **Solução**:
-1. Verificar Azure Files mount: Portal Azure → App Service → Configuration → Path mappings
-2. Verificar se volume está mapeado corretamente no compose
-3. Verificar permissões do Storage Account
+1. Verificar se o volume está montado:
+   ```powershell
+   az containerapp show --name $state.qdrantAppName --resource-group $state.resourceGroup --query "properties.template.containers[0].volumeMounts"
+   ```
+2. Verificar Azure Files mount no Environment:
+   ```powershell
+   az containerapp env storage list --name $state.environmentName --resource-group $state.resourceGroup
+   ```
 
-### Swap falha
+### Imagem não encontrada no ACR
 
-**Problema**: Erro ao fazer swap
+**Problema**: `ImagePullBackOff` ou erro ao puxar imagem
 
 **Solução**:
-1. Verificar se staging slot existe
-2. Verificar se staging está saudável (smoke test passou)
-3. Verificar se não há conflitos de configuração entre slots
+1. Verificar se a imagem existe:
+   ```powershell
+   az acr repository show-tags --name $state.acrName --repository choperia-api
+   ```
+2. Verificar credenciais do ACR no Container App
+3. Se usar Managed Identity, conceder permissão `AcrPull`:
+   ```powershell
+   $principalId = az containerapp identity show --name $state.apiAppName --resource-group $state.resourceGroup --query principalId -o tsv
+   az role assignment create `
+     --scope "/subscriptions/<SUB_ID>/resourceGroups/$($state.resourceGroup)/providers/Microsoft.ContainerRegistry/registries/$($state.acrName)" `
+     --assignee $principalId `
+     --role "AcrPull"
+   ```
 
-### Staging slot não existe (App Service Plan Basic)
+### Pipeline falha no deploy
 
-**Problema**: `The Resource 'Microsoft.Web/sites/.../slots/staging' under resource group '...' was not found.`
+**Problema**: GitHub Actions falha ao fazer deploy
 
-**Causa**: App Service Plan **B1 (Basic)** não suporta deployment slots. Apenas planos **Standard** e superiores suportam slots.
+**Solução**:
+1. Verificar se OIDC está configurado corretamente
+2. Verificar se os secrets do GitHub estão corretos
+3. Verificar permissões do Service Principal
+4. Verificar logs da pipeline no GitHub Actions
 
-**Solução - Upgrade para Standard (Recomendado)**:
+## Migração de App Service para Container Apps
 
-Use o script automatizado para fazer upgrade:
+Se você já tinha uma instalação usando Azure App Service e quer migrar para Container Apps:
+
+### 1. Limpar Recursos Antigos do App Service
+
+Use o script de limpeza para remover recursos do App Service:
 
 ```powershell
-# Obter nomes do deploy_state.json
-$state = Get-Content .azure/deploy_state.json | ConvertFrom-Json
-.\infra\upgrade_to_standard.ps1 -AppServicePlanName $state.appServicePlanName -ResourceGroup $state.resourceGroup
+# O script detecta automaticamente os recursos do deploy_state.json
+.\infra\cleanup_app_service.ps1
+
+# Ou especifique o Resource Group manualmente
+.\infra\cleanup_app_service.ps1 -ResourceGroup "rg-overlabs-prod"
+
+# Para pular confirmação (use com cuidado!)
+.\infra\cleanup_app_service.ps1 -Force
 ```
 
-O script irá:
-1. Verificar o SKU atual
-2. Fazer upgrade de Basic (B1) para Standard (S1)
-3. Criar o staging slot automaticamente (se ainda não existir)
+O script remove:
+- ✅ App Service (Web App)
+- ✅ App Service Plan
+- ✅ Staging Slots
 
-**Alternativa Manual**:
+O script **NÃO remove**:
+- ✅ Resource Group
+- ✅ ACR (Container Registry)
+- ✅ Key Vault
+- ✅ Storage Account
+- ✅ File Share
+
+### 2. Executar Bootstrap para Container Apps
+
+Após limpar os recursos antigos, execute o bootstrap:
 
 ```powershell
-# 1. Fazer upgrade do plano
-az appservice plan update --name asp-overlabs-prod-XXX --resource-group rg-overlabs-prod --sku S1
-
-# 2. Criar staging slot
-az webapp deployment slot create --name app-overlabs-prod-XXX --resource-group rg-overlabs-prod --slot staging --configuration-source app-overlabs-prod-XXX
+.\infra\bootstrap_container_apps.ps1 -EnvFile ".env" -Stage "prod" -Location "brazilsouth"
 ```
 
-**Nota**: 
-- O workflow foi ajustado para detectar automaticamente se o slot existe. Se não existir, faz deploy direto na produção.
-- Com plano Basic, não há staging slot, então o deploy é feito diretamente na produção. Isso é menos seguro, mas funcional.
-- **Para ambientes de produção, recomenda-se fortemente upgrade para Standard** para ter slots e blue-green deployment.
-- O bootstrap script agora cria novos planos com **Standard S1** por padrão.
+### 3. Atualizar deploy_state.json
 
-### Erro no pip-audit: formato inválido
-
-**Problema**: `pip-audit: error: argument -f/--format: invalid OutputFormatChoice value: 'text'`
-
-**Causa**: O formato `text` não é válido na versão atual do pip-audit.
-
-**Solução**: O workflow foi corrigido para remover o parâmetro `--format text`. O pip-audit agora usa o formato padrão (table).
-
-### Warning no Trivy: parâmetro não suportado
-
-**Problema**: `Unexpected input(s) 'skip-version-check'`
-
-**Causa**: A versão atual da action `aquasecurity/trivy-action@master` não suporta mais o parâmetro `skip-version-check`.
-
-**Solução**: O parâmetro foi removido do workflow. O Trivy continuará funcionando normalmente, apenas mostrará avisos de versão se houver atualizações disponíveis.
-
-### Warning no Semgrep: parâmetros inválidos
-
-**Problema**: `Unexpected input(s) 'generateSarif', 'generateGitHubSARIF', 'publishSarif'`
-
-**Causa**: A action `returntocorp/semgrep-action@v1` não aceita esses parâmetros na sintaxe atual.
-
-**Solução**: O workflow foi ajustado para executar Semgrep via CLI diretamente, permitindo maior controle sobre a configuração e saída.
-
-### Vulnerabilidade de Shell Injection no Workflow
-
-**Problema**: Semgrep detectou possível shell injection no workflow ao usar `${{ github.event.head_commit.message }}` diretamente no shell.
-
-**Causa**: Valores do contexto GitHub podem conter caracteres especiais que podem ser interpretados pelo shell.
-
-**Solução**: O workflow foi corrigido para usar variáveis de ambiente intermediárias (`env:`) antes de usar valores do contexto GitHub em comandos shell. Isso previne injeção de código malicioso.
-
-**Exemplo de correção**:
-```yaml
-# ❌ ANTES (vulnerável)
-run: |
-  echo "Commit: ${{ github.event.head_commit.message }}" >> $GITHUB_STEP_SUMMARY
-
-# ✅ DEPOIS (seguro)
-env:
-  COMMIT_MSG: ${{ github.event.head_commit.message }}
-run: |
-  echo "Commit: $COMMIT_MSG" >> $GITHUB_STEP_SUMMARY
-```
+O novo bootstrap criará um novo `deploy_state.json` com informações dos Container Apps.
 
 ## Próximos Passos
 
-- [ ] Configurar Application Insights
-- [ ] Adicionar alertas (CPU, Memory, Errors)
-- [ ] Implementar blue-green deployment
-- [ ] Adicionar testes de integração na pipeline
-- [ ] Configurar backup automático do Qdrant (Azure Files snapshot)
+1. **Build e Push da Imagem**: Execute a pipeline do GitHub Actions ou faça build manual
+2. **Configurar Managed Identity**: Para acesso ao Key Vault sem secrets
+3. **Aplicar Schema SQL**: Se usar MySQL para audit logging
+4. **Upload de Documentos**: Para o Qdrant via script de ingest
+5. **Configurar Alertas**: No portal Azure para monitoramento
 
 ## Referências
 
-- [Azure App Service Multi-Container](https://docs.microsoft.com/azure/app-service/tutorial-multi-container-app)
-- [GitHub Actions OIDC](https://docs.github.com/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-azure)
-- [Azure Key Vault References](https://docs.microsoft.com/azure/app-service/app-service-key-vault-references)
+- [Azure Container Apps Documentation](https://learn.microsoft.com/azure/container-apps/)
+- [Container Apps Environment](https://learn.microsoft.com/azure/container-apps/environment)
+- [Container Apps Revisions](https://learn.microsoft.com/azure/container-apps/revisions)
+- [Key Vault References](https://learn.microsoft.com/azure/container-apps/reference-key-vault-secret)

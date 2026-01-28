@@ -1,5 +1,9 @@
 version: '3.8'
 
+# DEPRECATED: Este arquivo não é mais usado.
+# O projeto agora usa Azure Container Apps (veja infra/bootstrap_container_apps.ps1)
+# Mantido apenas para referência histórica.
+#
 # Docker Compose para produção no Azure App Service
 # Variáveis de ambiente vêm dos App Settings (configurados via bootstrap)
 # IMAGE_TAG é injetado pelo GitHub Actions workflow

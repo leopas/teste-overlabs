@@ -217,7 +217,16 @@ Cada chunk tem `trust_score` e `freshness_score`. Em conflitos (ex.: versões v1
 - PII masking + audit logs + políticas de retenção + criptografia
 - Filtros no Qdrant por permissões/atributos
 
+### Deploy na Azure
+
+O projeto suporta deploy na Azure usando **Azure Container Apps**:
+
+- **Documentação completa**: [`docs/deployment_azure.md`](docs/deployment_azure.md)
+- **Bootstrap automatizado**: `.\infra\bootstrap_container_apps.ps1`
+- **CI/CD**: GitHub Actions com OIDC (sem secrets no GitHub)
+
 ### Documentação adicional
 - [`docs/architecture.md`](docs/architecture.md)
+- [`docs/deployment_azure.md`](docs/deployment_azure.md) - Guia completo de deploy na Azure
 - `docs/layout_report.md` (gerado pelo scan)
 

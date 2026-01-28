@@ -121,4 +121,4 @@ Repository secrets (3)
 Após configurar os secrets, você pode:
 1. Fazer commit e push para `main`
 2. A pipeline executará automaticamente
-3. Verificar em **Actions** → **Deploy to Azure App Service**
+3. Verificar em **Actions** → **Deploy to Azure Container Apps**
