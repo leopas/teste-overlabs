@@ -149,7 +149,7 @@ O bootstrap configura automaticamente:
 - **QDRANT_URL**: `http://app-overlabs-qdrant-prod-XXX:6333` (DNS interno)
 - **REDIS_URL**: `redis://app-overlabs-redis-prod-XXX:6379/0` (DNS interno)
 - **Variáveis não-secretas**: Do arquivo `.env`
-- **Secrets**: Key Vault references (`@Microsoft.KeyVault(...)`)
+- **Secrets**: keyVaultUrl + identity em `configuration.secrets`; env vars via `secretRef` (Container Apps não resolvem `@Microsoft.KeyVault(...)`)
 
 ### Após o Bootstrap
 
@@ -212,14 +212,22 @@ az containerapp update `
   --set-env-vars "NOVA_VARIAVEL=valor"
 ```
 
-### Usar Key Vault References
+### Usar secrets do Key Vault (ACA)
+
+Container Apps **não resolvem** a sintaxe `@Microsoft.KeyVault(...)`; use sempre `keyVaultUrl` + identity nos secrets e `secretRef` nas env vars.
 
 ```powershell
-# Configurar variável com Key Vault reference
+# 1. Adicionar secret do Key Vault ao Container App
 az containerapp update `
   --name $state.apiAppName `
   --resource-group $state.resourceGroup `
-  --set-env-vars "OPENAI_API_KEY=@Microsoft.KeyVault(SecretUri=https://$($state.keyVaultName).vault.azure.net/secrets/openai-api-key/)"
+  --set-secrets "openai-api-key=keyvaultref:https://$($state.keyVaultName).vault.azure.net/secrets/openai-api-key"
+
+# 2. Referenciar o secret na env var
+az containerapp update `
+  --name $state.apiAppName `
+  --resource-group $state.resourceGroup `
+  --set-env-vars "OPENAI_API_KEY=secretref:openai-api-key"
 ```
 
 ## Rollback e Revisões

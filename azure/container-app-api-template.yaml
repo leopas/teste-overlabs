@@ -1,0 +1,57 @@
+# Template de referência para API Container App (ACA)
+# Secrets: keyVaultUrl + identity; env: secretRef (nunca value com sintaxe App Service)
+# Substitua <kv-name>, <env-id>, <acr-server>, etc. antes de usar.
+
+location: brazilsouth
+properties:
+  environmentId: "<environment-id>"
+  identity:
+    type: SystemAssigned
+  configuration:
+    ingress:
+      external: true
+      allowInsecure: false
+      targetPort: 8000
+      transport: http
+      traffic:
+      - weight: 100
+        latestRevision: true
+    registries:
+    - server: <acr-server>
+      username: <acr-username>
+      passwordSecretRef: acr-password
+    secrets:
+    - name: acr-password
+      value: "<placeholder-acr-password>"
+    - name: mysql-password
+      keyVaultUrl: https://<kv-name>.vault.azure.net/secrets/mysql-password
+      identity: system
+    - name: openai-api-key
+      keyVaultUrl: https://<kv-name>.vault.azure.net/secrets/openai-api-key
+      identity: system
+    - name: audit-enc-key-b64
+      keyVaultUrl: https://<kv-name>.vault.azure.net/secrets/audit-enc-key-b64
+      identity: system
+  template:
+    containers:
+    - name: api
+      image: <acr-server>/choperia-api:latest
+      env:
+      - name: QDRANT_URL
+        value: "http://app-overlabs-qdrant:6333"
+      - name: REDIS_URL
+        value: "redis://app-overlabs-redis:6379/0"
+      - name: DOCS_ROOT
+        value: "/app/DOC-IA"
+      - name: MYSQL_PASSWORD
+        secretRef: mysql-password
+      - name: OPENAI_API_KEY
+        secretRef: openai-api-key
+      - name: AUDIT_ENC_KEY_B64
+        secretRef: audit-enc-key-b64
+      resources:
+        cpu: 2.0
+        memory: 4.0Gi
+    scale:
+      minReplicas: 1
+      maxReplicas: 5

@@ -175,18 +175,17 @@ if ($LASTEXITCODE -ne 0) {
     if ($useYaml) {
         Write-Host "  [INFO] Criando Container App com volume de documentos..." -ForegroundColor Cyan
         
-        # Construir lista de secrets do Key Vault (para Container Apps)
+        # IMPORTANTE: Criar app SEM secrets do Key Vault primeiro (chicken-and-egg)
+        # A identity será criada junto com o app, depois concedemos permissão no KV,
+        # e então atualizamos o app com os secrets do Key Vault
+        
+        # Construir lista de secrets (apenas ACR password por enquanto)
         $secretsYaml = ""
         $secretsYaml += "    - name: acr-password`n      value: $acrPassword`n"
         
-        # Adicionar secrets do Key Vault usando keyVaultUrl (sintaxe correta para Container Apps)
-        foreach ($key in $secrets.Keys) {
-            $kvName = $key.ToLower().Replace('_', '-')
-            $secretUri = "https://$KeyVault.vault.azure.net/secrets/$kvName"
-            $secretsYaml += "    - name: $kvName`n      keyVaultUrl: $secretUri`n"
-        }
+        # NÃO adicionar secrets do Key Vault aqui - será feito depois de conceder permissão
         
-        # Construir lista de env vars formatada
+        # Construir lista de env vars formatada (apenas non-secrets por enquanto)
         $envVarsYaml = ""
         foreach ($envVar in $envVars) {
             $parts = $envVar -split '=', 2
@@ -200,11 +199,9 @@ if ($LASTEXITCODE -ne 0) {
             $envVarsYaml += "      - name: $name`n        value: `"$value`"`n"
         }
         
-        # Adicionar env vars que referenciam secrets usando secretRef (sintaxe correta para Container Apps)
-        foreach ($key in $secretRefs.Keys) {
-            $secretName = $secretRefs[$key]
-            $envVarsYaml += "      - name: $key`n        secretRef: $secretName`n"
-        }
+        # NÃO adicionar env vars com secretRef aqui na criação inicial
+        # Serão adicionadas depois de conceder permissão no Key Vault (chicken-and-egg)
+        # Isso evita erro se a identity ainda não tem permissão no Key Vault
         
         # YAML no mesmo formato do Qdrant (que funcionou)
         # Adicionar location, aspas no envId, allowInsecure e traffic para evitar problemas de parsing
@@ -212,6 +209,8 @@ if ($LASTEXITCODE -ne 0) {
 location: $location
 properties:
   environmentId: "$envId"
+  identity:
+    type: SystemAssigned
   configuration:
     ingress:
       external: true
@@ -248,7 +247,10 @@ $envVarsYaml
       storageName: documents-storage
 "@
         
-        $tempYaml = "app_bootstrap_$(Get-Date -Format 'yyyyMMddHHmmss').yaml"
+        # YAML temporário em .azure/ (gitignored) para não commitar artefatos
+        $azureDir = Join-Path (Split-Path $PSScriptRoot -Parent) ".azure"
+        if (-not (Test-Path $azureDir)) { New-Item -ItemType Directory -Path $azureDir -Force | Out-Null }
+        $tempYaml = Join-Path $azureDir "container-app-api-debug.yaml"
         # Escrever sem BOM (Byte Order Mark) para evitar erro de parsing no Azure CLI
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($tempYaml, $yamlContent, $utf8NoBom)
@@ -467,6 +469,57 @@ if ($principalId) {
             }
         } else {
             Write-Host "  [OK] Permissão '$requiredRole' já existe" -ForegroundColor Green
+        }
+        
+        # Após conceder permissão, atualizar Container App com secrets do Key Vault
+        # Isso resolve o "chicken-and-egg": identity precisa existir antes de poder acessar Key Vault
+        if ($secrets.Count -gt 0) {
+            Write-Host "  [INFO] Atualizando Container App com secrets do Key Vault..." -ForegroundColor Cyan
+            Start-Sleep -Seconds 5  # Aguardar propagação da permissão
+            
+            $setSecretsArgs = @()
+            foreach ($key in $secrets.Keys) {
+                $kvName = $key.ToLower().Replace('_', '-')
+                $secretUri = "https://$KeyVault.vault.azure.net/secrets/$kvName"
+                $setSecretsArgs += "$kvName=keyvaultref:$secretUri"
+            }
+            
+            if ($setSecretsArgs.Count -gt 0) {
+                $ErrorActionPreference = "Continue"
+                az containerapp update `
+                    --name $ApiApp `
+                    --resource-group $ResourceGroup `
+                    --set-secrets $setSecretsArgs 2>&1 | Out-Null
+                $ErrorActionPreference = "Stop"
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  [OK] Secrets do Key Vault adicionados ao Container App" -ForegroundColor Green
+                    
+                    # Agora adicionar env vars com secretRef
+                    $setEnvVarsArgs = @()
+                    foreach ($key in $secretRefs.Keys) {
+                        $secretName = $secretRefs[$key]
+                        $setEnvVarsArgs += "$key=secretref:$secretName"
+                    }
+                    
+                    if ($setEnvVarsArgs.Count -gt 0) {
+                        $ErrorActionPreference = "Continue"
+                        az containerapp update `
+                            --name $ApiApp `
+                            --resource-group $ResourceGroup `
+                            --set-env-vars $setEnvVarsArgs 2>&1 | Out-Null
+                        $ErrorActionPreference = "Stop"
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "  [OK] Env vars com secretRef configuradas" -ForegroundColor Green
+                        } else {
+                            Write-Host "  [AVISO] Falha ao configurar env vars com secretRef" -ForegroundColor Yellow
+                        }
+                    }
+                } else {
+                    Write-Host "  [AVISO] Falha ao adicionar secrets do Key Vault (pode ser problema de permissão ou propagação)" -ForegroundColor Yellow
+                }
+            }
         }
     } else {
         Write-Host "  [AVISO] Key Vault não usa RBAC (usa Access Policies)" -ForegroundColor Yellow

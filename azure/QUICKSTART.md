@@ -65,13 +65,19 @@ az keyvault secret set --vault-name rag-overlabs-kv --name "OpenAIApiKey" --valu
 python -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())"
 az keyvault secret set --vault-name rag-overlabs-kv --name "AuditEncKey" --value "<chave-gerada>"
 
-# Atualizar Container App
+# Atualizar Container App (ACA: keyvaultref + secretRef)
+az containerapp update `
+  --name rag-overlabs-app `
+  --resource-group rag-overlabs-rg `
+  --set-secrets `
+    "openai-api-key=keyvaultref:https://rag-overlabs-kv.vault.azure.net/secrets/OpenAIApiKey" `
+    "audit-enc-key-b64=keyvaultref:https://rag-overlabs-kv.vault.azure.net/secrets/AuditEncKey"
 az containerapp update `
   --name rag-overlabs-app `
   --resource-group rag-overlabs-rg `
   --set-env-vars `
-    "OPENAI_API_KEY=@Microsoft.KeyVault(SecretUri=https://rag-overlabs-kv.vault.azure.net/secrets/OpenAIApiKey/)" `
-    "AUDIT_ENC_KEY_B64=@Microsoft.KeyVault(SecretUri=https://rag-overlabs-kv.vault.azure.net/secrets/AuditEncKey/)"
+    "OPENAI_API_KEY=secretref:openai-api-key" `
+    "AUDIT_ENC_KEY_B64=secretref:audit-enc-key-b64"
 ```
 
 ### 3. Upload de Documentos e Ingest

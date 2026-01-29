@@ -45,6 +45,10 @@ apikey*.json
 !.azure/.gitkeep
 !.azure/deploy_state.json
 
+# YAMLs artefato de Container App (bootstrap_api.ps1 com timestamp)
+app_bootstrap_*.yaml
+app_recreate_*.yaml
+
 # Python
 __pycache__/
 *.py[cod]
