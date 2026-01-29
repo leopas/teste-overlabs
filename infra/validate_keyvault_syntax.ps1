@@ -96,8 +96,8 @@ if ($errors.Count -eq 0 -and $warnings.Count -eq 0) {
 
 if ($errors.Count -gt 0) {
     Write-Host "[ERRO] Problemas encontrados ($($errors.Count)):" -ForegroundColor Red
-    foreach ($error in $errors) {
-        Write-Host "  - $error" -ForegroundColor Red
+    foreach ($err in $errors) {
+        Write-Host "  - $err" -ForegroundColor Red
     }
     Write-Host ""
     Write-Host "Corrija os problemas acima antes de fazer commit." -ForegroundColor Yellow
