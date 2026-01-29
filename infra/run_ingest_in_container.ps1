@@ -89,6 +89,13 @@ $envVars = az containerapp show `
 
 if ($envVars -and $envVars -ne "NOT_SET") {
     Write-Host "[OK] QDRANT_URL configurada: $envVars" -ForegroundColor Green
+    
+    # Verificar se está usando FQDN interno completo (necessário quando external: false)
+    if ($envVars -notmatch "\.internal\." -and $envVars -match "app-overlabs-qdrant-prod-248:6333") {
+        Write-Host "[AVISO] QDRANT_URL está usando nome curto. Pode não resolver corretamente!" -ForegroundColor Yellow
+        Write-Host "[INFO] Execute: .\infra\fix_qdrant_url.ps1 para corrigir para FQDN interno completo" -ForegroundColor Yellow
+        Write-Host ""
+    }
 } else {
     Write-Host "[ERRO] QDRANT_URL não está configurada no container!" -ForegroundColor Red
     Write-Host "[INFO] Execute o bootstrap novamente ou configure manualmente." -ForegroundColor Yellow
@@ -119,9 +126,14 @@ if ($useOpenAIEnv -eq "true" -or $useOpenAIEnv -eq "1" -or $useOpenAIEnv -eq "Tr
     
     if ($openaiKeyRef -and $openaiKeyRef -match "KeyVault") {
         Write-Host "[OK] OPENAI_API_KEY configurada (Key Vault reference)" -ForegroundColor Green
+        Write-Host "[AVISO] Se a ingestão falhar com 401, a referência pode não estar sendo resolvida." -ForegroundColor Yellow
+        Write-Host "[INFO] Nesse caso, use: .\infra\test_keyvault_resolution_workaround.ps1 para testar com chave direta" -ForegroundColor Gray
+    } elseif ($openaiKeyRef -and $openaiKeyRef -notmatch "KeyVault" -and $openaiKeyRef.Length -gt 10) {
+        Write-Host "[OK] OPENAI_API_KEY configurada (valor direto)" -ForegroundColor Green
     } else {
-        Write-Host "[AVISO] OPENAI_API_KEY não encontrada no container" -ForegroundColor Yellow
+        Write-Host "[AVISO] OPENAI_API_KEY não encontrada ou não configurada corretamente" -ForegroundColor Yellow
         Write-Host "[INFO] Configure no Key Vault e referencie no Container App." -ForegroundColor Yellow
+        Write-Host "[INFO] Ou use: .\infra\test_keyvault_resolution_workaround.ps1 para configurar diretamente" -ForegroundColor Gray
     }
 } else {
     Write-Host "[INFO] Usando embeddings locais (FastEmbed)" -ForegroundColor Yellow
@@ -135,10 +147,11 @@ if ($TruncateFirst) {
     Write-Host "[INFO] Truncando collection 'docs_chunks'..." -ForegroundColor Cyan
     Write-Host ""
     
-    # Executar truncate usando Python inline (mais confiável que arquivo)
-    $truncateScript = @"
+    # Método mais simples: usar módulo Python direto via -m
+    # Mas como não temos módulo truncate, vamos usar um script inline mais simples
+    # Criar script Python usando echo e base64 para evitar problemas de escape
+    $truncatePythonScript = @"
 import sys
-from pathlib import Path
 sys.path.insert(0, '/app')
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
@@ -180,15 +193,19 @@ except Exception as e:
     sys.exit(1)
 "@
     
-    # Usar base64 para evitar problemas de escape
-    $truncateBytes = [System.Text.Encoding]::UTF8.GetBytes($truncateScript)
+    # Codificar em base64 e criar comando que decodifica e executa
+    $truncateBytes = [System.Text.Encoding]::UTF8.GetBytes($truncatePythonScript)
     $truncateBase64 = [Convert]::ToBase64String($truncateBytes)
+    
+    # Usar método que funciona: criar arquivo temporário no container via echo + base64
+    # Isso evita problemas de escape do PowerShell
+    $truncateCmd = "sh -c `"echo '$truncateBase64' | base64 -d > /tmp/truncate.py && python /tmp/truncate.py`""
     
     $ErrorActionPreference = "Continue"
     az containerapp exec `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
-        --command "python -c `"import base64, sys; exec(base64.b64decode('$truncateBase64').decode('utf-8'))\`"" 2>&1 | Out-Host
+        --command $truncateCmd 2>&1 | Out-Host
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "[OK] Collection truncada" -ForegroundColor Green
@@ -293,10 +310,20 @@ Write-Host "[INFO] Verificando documentos indexados..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
 
 # Aguardar um pouco antes de verificar (evitar rate limit)
-Start-Sleep -Seconds 10
+Start-Sleep -Seconds 15
 
-# Usar comando simples sem aspas complexas
-$checkCmd = 'python -c "from qdrant_client import QdrantClient; import os; qdrant = QdrantClient(url=os.getenv(''QDRANT_URL'')); info = qdrant.get_collection(''docs_chunks''); print(f''Pontos indexados: {info.points_count}'')"'
+# Usar método simplificado: criar script temporário via echo + base64
+$checkPythonScript = @"
+from qdrant_client import QdrantClient
+import os
+qdrant = QdrantClient(url=os.getenv('QDRANT_URL'), timeout=30.0)
+info = qdrant.get_collection('docs_chunks')
+print(f'Pontos indexados: {info.points_count}')
+"@
+
+$checkBytes = [System.Text.Encoding]::UTF8.GetBytes($checkPythonScript)
+$checkBase64 = [Convert]::ToBase64String($checkBytes)
+$checkCmd = "sh -c `"echo '$checkBase64' | base64 -d > /tmp/check_points.py && python /tmp/check_points.py`""
 
 $checkOutput = az containerapp exec `
     --name $ApiAppName `
