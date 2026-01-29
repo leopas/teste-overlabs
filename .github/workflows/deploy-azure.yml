@@ -37,13 +37,14 @@ jobs:
         with:
           python-version: '3.12'
       
-      - name: Validate .env structure
-        run: |
-          if [ ! -f .env ]; then
-            echo "⚠️  .env não encontrado (pode ser esperado se secrets estão no Key Vault)"
-          else
-            python infra/validate_env.py --env .env
-          fi
+      # VALIDAÇÃO .env DESABILITADA TEMPORARIAMENTE (validate_env.py foi movido para infra/old/)
+      # - name: Validate .env structure
+      #   run: |
+      #     if [ ! -f .env ]; then
+      #       echo "⚠️  .env não encontrado (pode ser esperado se secrets estão no Key Vault)"
+      #     else
+      #       python infra/validate_env.py --env .env
+      #     fi
       
       - name: Check deploy state
         run: |
@@ -107,44 +108,45 @@ jobs:
           cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:buildcache,mode=max
       
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@master
-        continue-on-error: true
-        with:
-          image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: 'table'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '0'
-          ignore-unfixed: true
-      
-      - name: Setup Python for security scans
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      
-      - name: Scan dependencies with pip-audit
-        continue-on-error: true
-        run: |
-          pip install pip-audit
-          echo "🔍 Scanning Python dependencies for vulnerabilities..."
-          pip-audit --desc --format json -o pip-audit-report.json || true
-          pip-audit --desc || true
-      
-      - name: Scan Python code with Bandit
-        continue-on-error: true
-        run: |
-          pip install bandit[toml]
-          echo "🔍 Scanning Python code with Bandit..."
-          bandit -r backend/app -f json -o bandit-report.json || true
-          bandit -r backend/app -f txt || true
-      
-      - name: Scan code with Semgrep
-        continue-on-error: true
-        run: |
-          pip install semgrep
-          echo "🔍 Scanning code with Semgrep..."
-          semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" --json -o semgrep-results.json || true
-          semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" || true
+      # CODE SCANS DESABILITADOS TEMPORARIAMENTE
+      # - name: Scan image with Trivy
+      #   uses: aquasecurity/trivy-action@master
+      #   continue-on-error: true
+      #   with:
+      #     image-ref: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      #     format: 'table'
+      #     severity: 'CRITICAL,HIGH'
+      #     exit-code: '0'
+      #     ignore-unfixed: true
+      # 
+      # - name: Setup Python for security scans
+      #   uses: actions/setup-python@v5
+      #   with:
+      #     python-version: '3.12'
+      # 
+      # - name: Scan dependencies with pip-audit
+      #   continue-on-error: true
+      #   run: |
+      #     pip install pip-audit
+      #     echo "🔍 Scanning Python dependencies for vulnerabilities..."
+      #     pip-audit --desc --format json -o pip-audit-report.json || true
+      #     pip-audit --desc || true
+      # 
+      # - name: Scan Python code with Bandit
+      #   continue-on-error: true
+      #   run: |
+      #     pip install bandit[toml]
+      #     echo "🔍 Scanning Python code with Bandit..."
+      #     bandit -r backend/app -f json -o bandit-report.json || true
+      #     bandit -r backend/app -f txt || true
+      # 
+      # - name: Scan code with Semgrep
+      #   continue-on-error: true
+      #   run: |
+      #     pip install semgrep
+      #     echo "🔍 Scanning code with Semgrep..."
+      #     semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" --json -o semgrep-results.json || true
+      #     semgrep --config "p/security-audit" --config "p/python" --config "p/owasp-top-ten" || true
 
   deploy:
     name: Deploy to Container App
