@@ -61,78 +61,33 @@ if ($LASTEXITCODE -eq 0) {
 $ErrorActionPreference = "Stop"
 Write-Host ""
 
-# Criar Redis Container App via YAML (contorna parsing do Azure CLI com --args)
-Write-Host "[INFO] Criando Redis Container App via YAML..." -ForegroundColor Yellow
-
-# Obter environment ID e location (sem capturar stderr)
-$ErrorActionPreference = "Continue"
-$envId = az containerapp env show --name $Environment --resource-group $ResourceGroup --query id -o tsv 2>$null
-$location = az containerapp env show --name $Environment --resource-group $ResourceGroup --query location -o tsv 2>$null
-$ErrorActionPreference = "Stop"
-
-$envId = ("" + $envId).Trim()
-$location = ("" + $location).Trim()
-if (-not $location -or $location -match "error|not found") {
-    $location = "brazilsouth"
-}
-$location = $location.ToLower().Replace(' ', '')
-
-$yamlContent = @"
-location: $location
-properties:
-  environmentId: "$envId"
-  configuration:
-    ingress:
-      external: false
-      targetPort: 6379
-      transport: Tcp
-  template:
-    containers:
-    - name: redis
-      image: redis:7-alpine
-      command:
-      - redis-server
-      args:
-      - --appendonly
-      - "no"
-      - --protected-mode
-      - "no"
-      - --bind
-      - 0.0.0.0
-      resources:
-        cpu: 0.5
-        memory: 1.0Gi
-    scale:
-      minReplicas: 1
-      maxReplicas: 1
-"@
-
-$tempYaml = [System.IO.Path]::GetTempFileName() + ".yaml"
-# Escrever sem BOM (Byte Order Mark) para evitar erro de parsing no Azure CLI
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
-[System.IO.File]::WriteAllText($tempYaml, $yamlContent, $utf8NoBom)
+# Criar Redis Container App via CLI (contorna parsing do Azure CLI com valores iniciando em '-')
+#
+# Nota: algumas versões do Azure CLI/extension tratam valores como "-lc" como flags,
+# então usamos a forma "--args=-lc" (com '=') e colocamos o resto do comando em uma string única.
+Write-Host "[INFO] Criando Redis Container App..." -ForegroundColor Yellow
 
 $ErrorActionPreference = "Continue"
-try {
-    $out = az containerapp create `
-        --name $RedisApp `
-        --resource-group $ResourceGroup `
-        --yaml $tempYaml 2>&1
-} finally {
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[AVISO] YAML temporário mantido para debug: $tempYaml" -ForegroundColor Yellow
-    } else {
-        Remove-Item $tempYaml -Force -ErrorAction SilentlyContinue
-    }
-}
+$out = az containerapp create `
+    --name $RedisApp `
+    --resource-group $ResourceGroup `
+    --environment $Environment `
+    --image redis:7-alpine `
+    --ingress internal `
+    --target-port 6379 `
+    --transport tcp `
+    --cpu 0.5 `
+    --memory 1.0Gi `
+    --min-replicas 1 `
+    --max-replicas 1 `
+    --command "sh" `
+    --args=-lc "exec redis-server --appendonly no --protected-mode no --bind 0.0.0.0" 2>&1
 $ErrorActionPreference = "Stop"
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "[OK] Redis Container App criado (YAML)" -ForegroundColor Green
+    Write-Host "[OK] Redis Container App criado" -ForegroundColor Green
 } else {
-    Write-Host "[ERRO] Falha ao criar Redis Container App via YAML" -ForegroundColor Red
-    if ($out) {
-        Write-Host $out
-    }
+    Write-Host "[ERRO] Falha ao criar Redis Container App" -ForegroundColor Red
+    if ($out) { Write-Host $out }
     exit 1
 }
