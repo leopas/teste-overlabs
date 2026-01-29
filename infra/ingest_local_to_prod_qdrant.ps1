@@ -15,9 +15,14 @@ Write-Host ""
 
 # Carregar deploy_state.json se não fornecido
 if (-not $ResourceGroup -or -not $QdrantAppName) {
-    $stateFile = ".azure/deploy_state.json"
+    # Obter diretório do script para encontrar deploy_state.json relativo ao repositório
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $repoRoot = Split-Path -Parent $scriptDir
+    $stateFile = Join-Path $repoRoot ".azure\deploy_state.json"
+    
     if (-not (Test-Path $stateFile)) {
-        Write-Host "[ERRO] Arquivo $stateFile não encontrado. Forneça -ResourceGroup e -QdrantAppName." -ForegroundColor Red
+        Write-Host "[ERRO] Arquivo $stateFile não encontrado." -ForegroundColor Red
+        Write-Host "[INFO] Forneça -ResourceGroup e -QdrantAppName ou execute do diretório raiz do projeto." -ForegroundColor Yellow
         exit 1
     }
     $state = Get-Content $stateFile | ConvertFrom-Json
@@ -48,44 +53,98 @@ if (-not $qdrantExists) {
 Write-Host "[OK] Qdrant Container App encontrado" -ForegroundColor Green
 Write-Host ""
 
-# Obter FQDN do Qdrant
+# Obter FQDN do Qdrant (precisa ser externo para acesso de fora do Container Apps Environment)
 Write-Host "[INFO] Obtendo URL do Qdrant..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
 $qdrantFqdn = az containerapp show `
     --name $QdrantAppName `
     --resource-group $ResourceGroup `
-    --query "properties.configuration.ingress.fqdn" -o tsv
+    --query "properties.configuration.ingress.fqdn" -o tsv 2>$null
+
+# Se não tiver FQDN externo, o Qdrant pode estar configurado como interno
+# Nesse caso, precisamos usar o FQDN do Environment
+if (-not $qdrantFqdn) {
+    Write-Host "[AVISO] Qdrant não tem FQDN externo. Obtendo FQDN do Environment..." -ForegroundColor Yellow
+    $envName = az containerapp show --name $QdrantAppName --resource-group $ResourceGroup --query "properties.environmentId" -o tsv 2>$null
+    if ($envName -match '/managedEnvironments/([^/]+)') {
+        $envNameOnly = $matches[1]
+        $envFqdn = az containerapp env show --name $envNameOnly --resource-group $ResourceGroup --query "properties.defaultDomain" -o tsv 2>$null
+        if ($envFqdn) {
+            # Construir URL usando o nome do app e o domínio do environment
+            $appNameShort = $QdrantAppName -replace '.*-', ''
+            $qdrantFqdn = "$QdrantAppName.$envFqdn"
+        }
+    }
+}
+
+$ErrorActionPreference = "Stop"
 
 if (-not $qdrantFqdn) {
     Write-Host "[ERRO] Não foi possível obter FQDN do Qdrant" -ForegroundColor Red
+    Write-Host "[INFO] O Qdrant pode estar configurado como 'internal'. Para ingestão local, ele precisa ter ingress externo." -ForegroundColor Yellow
     exit 1
 }
 
-$qdrantUrl = "https://$qdrantFqdn"
+# Garantir que a URL use HTTPS
+if (-not $qdrantFqdn.StartsWith("http")) {
+    $qdrantUrl = "https://$qdrantFqdn"
+} else {
+    $qdrantUrl = $qdrantFqdn
+}
+
 Write-Host "[OK] Qdrant URL: $qdrantUrl" -ForegroundColor Green
 Write-Host ""
 
-# Verificar se documentos locais existem
-if (-not (Test-Path $DocsPath)) {
-    Write-Host "[ERRO] Diretório '$DocsPath' não encontrado!" -ForegroundColor Red
+# Verificar se documentos locais existem (relativo ao repositório)
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptDir
+$docsFullPath = Join-Path $repoRoot $DocsPath
+
+if (-not (Test-Path $docsFullPath)) {
+    Write-Host "[ERRO] Diretório '$docsFullPath' não encontrado!" -ForegroundColor Red
     exit 1
 }
+
+# Usar caminho absoluto para os documentos
+$DocsPath = $docsFullPath
 
 Write-Host "[OK] Documentos locais encontrados: $DocsPath" -ForegroundColor Green
 Write-Host ""
 
-# Verificar se OPENAI_API_KEY está configurada
-$openaiKey = $env:OPENAI_API_KEY
-if (-not $openaiKey) {
-    Write-Host "[AVISO] OPENAI_API_KEY não encontrada nas variáveis de ambiente" -ForegroundColor Yellow
-    Write-Host "  Configure antes de continuar:" -ForegroundColor Yellow
-    Write-Host "  `$env:OPENAI_API_KEY = 'sk-...'" -ForegroundColor Gray
-    Write-Host ""
-    $continue = Read-Host "Deseja continuar mesmo assim? (S/N)"
-    if ($continue -ne "S" -and $continue -ne "s") {
-        exit 0
+# Carregar OPENAI_API_KEY do .env (no diretório raiz)
+$openaiKey = $null
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptDir
+$envFile = Join-Path $repoRoot ".env"
+
+if (Test-Path $envFile) {
+    Write-Host "[INFO] Carregando OPENAI_API_KEY do .env..." -ForegroundColor Yellow
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^\s*OPENAI_API_KEY\s*=\s*(.+)$' -and $_ -notmatch '^\s*#') {
+            $openaiKey = $matches[1].Trim('"').Trim("'")
+            # Remover comentários inline
+            if ($openaiKey -match '^(.+?)\s*#') {
+                $openaiKey = $matches[1].Trim()
+            }
+        }
     }
+}
+
+if ($openaiKey) {
+    Write-Host "[OK] OPENAI_API_KEY carregada do .env" -ForegroundColor Green
 } else {
-    Write-Host "[OK] OPENAI_API_KEY configurada" -ForegroundColor Green
+    # Tentar variável de ambiente como fallback
+    $openaiKey = $env:OPENAI_API_KEY
+    if ($openaiKey) {
+        Write-Host "[OK] OPENAI_API_KEY encontrada nas variáveis de ambiente" -ForegroundColor Green
+    } else {
+        Write-Host "[ERRO] OPENAI_API_KEY não encontrada no .env nem nas variáveis de ambiente" -ForegroundColor Red
+        Write-Host "  Configure no .env ou:" -ForegroundColor Yellow
+        Write-Host "  `$env:OPENAI_API_KEY = 'sk-...'" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "[INFO] Arquivo .env esperado em: $envFile" -ForegroundColor Cyan
+        exit 1
+    }
 }
 Write-Host ""
 
@@ -147,7 +206,21 @@ except Exception as e:
 Write-Host "[INFO] Executando scan_docs localmente..." -ForegroundColor Cyan
 Write-Host ""
 
-$env:DOCS_ROOT = $DocsPath
+# Mudar para o diretório backend para executar os scripts Python
+$originalDir = Get-Location
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptDir
+$backendDir = Join-Path $repoRoot "backend"
+
+if (-not (Test-Path $backendDir)) {
+    Write-Host "[ERRO] Diretório 'backend' não encontrado!" -ForegroundColor Red
+    exit 1
+}
+
+Set-Location $backendDir
+$env:DOCS_ROOT = (Resolve-Path (Join-Path $originalDir $DocsPath)).Path
+$env:PYTHONPATH = $backendDir
+
 $scanOutput = python -m scripts.scan_docs 2>&1
 
 if ($LASTEXITCODE -eq 0) {
@@ -160,6 +233,8 @@ if ($LASTEXITCODE -eq 0) {
 }
 Write-Host ""
 
+Set-Location $originalDir
+
 # Executar ingest localmente apontando para Qdrant de produção
 Write-Host "[INFO] Executando ingest localmente → Qdrant de produção..." -ForegroundColor Cyan
 Write-Host "  Qdrant: $qdrantUrl" -ForegroundColor Gray
@@ -167,16 +242,23 @@ Write-Host "  Documentos: $DocsPath" -ForegroundColor Gray
 Write-Host "  Embeddings: OpenAI" -ForegroundColor Gray
 Write-Host ""
 
+# Mudar para o diretório backend para executar os scripts Python
+Set-Location $backendDir
+
 # Configurar variáveis de ambiente para o Python
-$env:DOCS_ROOT = $DocsPath
+$env:DOCS_ROOT = (Resolve-Path (Join-Path $originalDir $DocsPath)).Path
 $env:QDRANT_URL = $qdrantUrl
 $env:USE_OPENAI_EMBEDDINGS = "true"
+$env:PYTHONPATH = $backendDir
 
 if ($openaiKey) {
     $env:OPENAI_API_KEY = $openaiKey
 }
 
 $ingestOutput = python -m scripts.ingest 2>&1
+
+# Voltar para o diretório original
+Set-Location $originalDir
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[OK] Ingestão concluída com sucesso!" -ForegroundColor Green

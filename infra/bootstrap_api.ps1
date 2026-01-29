@@ -1,0 +1,334 @@
+# Script para criar/verificar API Container App com volume de documentos
+# Uso: .\infra\bootstrap_api.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-248" -ApiApp "app-overlabs-prod-248" -AcrName "acrchoperia" -KeyVault "kv-overlabs-prod-248" -QdrantUrl "http://app-overlabs-qdrant-prod-248:6333" -RedisUrl "redis://app-overlabs-redis-prod-248:6379/0" -EnvFile ".env"
+#
+# O script carrega automaticamente secrets e non-secrets do arquivo .env
+
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$ResourceGroup,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$Environment,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$ApiApp,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$AcrName,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$KeyVault,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$QdrantUrl,
+    
+    [Parameter(Mandatory=$true)]
+    [string]$RedisUrl,
+    
+    [string]$EnvFile = ".env"
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "=== Bootstrap API Container App ===" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "[INFO] Resource Group: $ResourceGroup" -ForegroundColor Yellow
+Write-Host "[INFO] Environment: $Environment" -ForegroundColor Yellow
+Write-Host "[INFO] API Container App: $ApiApp" -ForegroundColor Yellow
+Write-Host "[INFO] ACR: $AcrName" -ForegroundColor Yellow
+Write-Host "[INFO] Key Vault: $KeyVault" -ForegroundColor Yellow
+Write-Host "[INFO] Env File: $EnvFile" -ForegroundColor Yellow
+Write-Host ""
+
+# Validar arquivo .env
+if (-not (Test-Path $EnvFile)) {
+    Write-Host "[ERRO] Arquivo $EnvFile não encontrado" -ForegroundColor Red
+    exit 1
+}
+
+# Carregar e classificar variáveis do .env
+Write-Host "[INFO] Carregando variáveis do .env..." -ForegroundColor Cyan
+$secrets = @{}
+$nonSecrets = @{}
+
+# Denylist: variáveis que NÃO são secrets mesmo contendo palavras-chave
+$denylist = @(
+    "PORT", "ENV", "LOG_LEVEL", "HOST",
+    "QDRANT_URL", "REDIS_URL", "DOCS_ROOT",
+    "MYSQL_PORT", "MYSQL_HOST", "MYSQL_DATABASE", "MYSQL_SSL_CA",
+    "OTEL_ENABLED", "USE_OPENAI_EMBEDDINGS",
+    "AUDIT_LOG_ENABLED", "AUDIT_LOG_INCLUDE_TEXT", "AUDIT_LOG_RAW_MODE", "AUDIT_LOG_REDACT", "AUDIT_LOG_RAW_MAX_CHARS",
+    "ABUSE_CLASSIFIER_ENABLED", "ABUSE_RISK_THRESHOLD",
+    "PROMPT_FIREWALL_ENABLED", "PROMPT_FIREWALL_RULES_PATH", "PROMPT_FIREWALL_MAX_RULES", "PROMPT_FIREWALL_RELOAD_CHECK_SECONDS",
+    "PIPELINE_LOG_ENABLED", "PIPELINE_LOG_INCLUDE_TEXT",
+    "TRACE_SINK", "TRACE_SINK_QUEUE_SIZE",
+    "AUDIT_ENC_AAD_MODE",
+    "RATE_LIMIT_PER_MINUTE", "CACHE_TTL_SECONDS",
+    "FIREWALL_LOG_SAMPLE_RATE",
+    "OPENAI_MODEL", "OPENAI_MODEL_ENRICHMENT", "OPENAI_EMBEDDINGS_MODEL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "DOCS_HOST_PATH",
+    "API_PORT", "QDRANT_PORT", "REDIS_PORT"
+)
+
+# Palavras-chave que indicam secrets
+$secretKeywords = @("KEY", "SECRET", "TOKEN", "PASSWORD", "PASS", "CONNECTION", "API")
+
+Get-Content $EnvFile | ForEach-Object {
+    if ($_ -match '^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.+)$' -and $_ -notmatch '^\s*#') {
+        $key = $matches[1]
+        $value = $matches[2].Trim('"').Trim("'")
+        
+        # Remover comentários inline
+        if ($value -match '^(.+?)\s*#') {
+            $value = $matches[1].Trim()
+        }
+        
+        if ($value) {
+            # Classificar como secret (mesma lógica do validate_env.py)
+            $isInDenylist = $denylist -contains $key
+            $keyUpper = $key.ToUpper()
+            $hasSecretKeyword = $false
+            foreach ($keyword in $secretKeywords) {
+                if ($keyUpper -like "*$keyword*") {
+                    $hasSecretKeyword = $true
+                    break
+                }
+            }
+            
+            $isSecret = -not $isInDenylist -and $hasSecretKeyword
+            
+            if ($isSecret) {
+                $secrets[$key] = $value
+            } else {
+                $nonSecrets[$key] = $value
+            }
+        }
+    }
+}
+
+Write-Host "[INFO] Variáveis encontradas: $($secrets.Count + $nonSecrets.Count) total, $($secrets.Count) secrets, $($nonSecrets.Count) non-secrets" -ForegroundColor Cyan
+Write-Host ""
+
+# Construir env-vars
+$envVars = @(
+    "QDRANT_URL=$QdrantUrl",
+    "REDIS_URL=$RedisUrl",
+    "DOCS_ROOT=/app/DOC-IA"
+)
+
+foreach ($key in $NonSecrets.Keys) {
+    $envVars += "$key=$($NonSecrets[$key])"
+}
+
+# Adicionar Key Vault references para secrets
+foreach ($key in $Secrets.Keys) {
+    $kvName = $key.ToLower().Replace('_', '-')
+    $envVars += "$key=@Microsoft.KeyVault(SecretUri=https://$KeyVault.vault.azure.net/secrets/$kvName/)"
+}
+
+# Verificar se já existe
+Write-Host "[INFO] Verificando API Container App..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
+$null = az containerapp show --name $ApiApp --resource-group $ResourceGroup 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[INFO] Criando API Container App..." -ForegroundColor Yellow
+    
+    # Obter environment ID e location (sem capturar stderr)
+    Write-Host "  [INFO] Obtendo Environment ID e location..." -ForegroundColor Cyan
+    $ErrorActionPreference = "Continue"
+    $envId = az containerapp env show --name $Environment --resource-group $ResourceGroup --query id -o tsv 2>$null
+    $location = az containerapp env show --name $Environment --resource-group $ResourceGroup --query location -o tsv 2>$null
+    $ErrorActionPreference = "Stop"
+    
+    # Limpar e validar valores
+    $envId = $envId.Trim()
+    $location = $location.Trim()
+    
+    if (-not $envId -or $envId -match "error|not found") {
+        Write-Host "  [ERRO] Falha ao obter Environment ID!" -ForegroundColor Red
+        Write-Host "  [ERRO] Saída: $envId" -ForegroundColor Red
+        Write-Host "  [AVISO] Tentando criar sem volume..." -ForegroundColor Yellow
+        $useYaml = $false
+    } else {
+        Write-Host "  [OK] Environment ID obtido" -ForegroundColor Green
+        if (-not $location -or $location -match "error|not found") {
+            $location = "brazilsouth"  # Fallback padrão
+        }
+        # Garantir que location é código (não display name)
+        $location = $location.ToLower().Replace(' ', '')
+        Write-Host "  [OK] Location: $location" -ForegroundColor Green
+        $useYaml = $true
+    }
+    
+    # Obter credenciais ACR
+    $acrLoginServer = az acr show --name $AcrName --query loginServer -o tsv
+    $acrUsername = az acr credential show --name $AcrName --query username -o tsv
+    $acrPassword = az acr credential show --name $AcrName --query passwords[0].value -o tsv
+    
+    # Criar Container App com volume usando YAML
+    if ($useYaml) {
+        Write-Host "  [INFO] Criando Container App com volume de documentos..." -ForegroundColor Cyan
+        
+        # Construir lista de env vars formatada
+        $envVarsYaml = ""
+        foreach ($envVar in $envVars) {
+            $parts = $envVar -split '=', 2
+            $name = $parts[0]
+            $value = $parts[1]
+            
+            # Escapar caracteres especiais para YAML
+            if ($value -match '^@Microsoft\.KeyVault') {
+                # Key Vault reference: precisa estar entre aspas porque começa com @
+                $valueEscaped = $value -replace '"', '\"'
+                $envVarsYaml += "      - name: $name`n        value: `"$valueEscaped`"`n"
+            } else {
+                # Valor normal: escapar aspas e caracteres especiais
+                $value = $value -replace '\\', '\\\\'  # Escapar backslashes primeiro
+                $value = $value -replace '"', '\"'      # Escapar aspas
+                $value = $value -replace '`n', '\n'     # Escapar newlines
+                $envVarsYaml += "      - name: $name`n        value: `"$value`"`n"
+            }
+        }
+        
+        # YAML no mesmo formato do Qdrant (que funcionou)
+        # Adicionar location, aspas no envId, allowInsecure e traffic para evitar problemas de parsing
+        $yamlContent = @"
+location: $location
+properties:
+  environmentId: "$envId"
+  configuration:
+    ingress:
+      external: true
+      allowInsecure: false
+      targetPort: 8000
+      transport: http
+      traffic:
+      - weight: 100
+        latestRevision: true
+    registries:
+    - server: $acrLoginServer
+      username: $acrUsername
+      passwordSecretRef: acr-password
+    secrets:
+    - name: acr-password
+      value: $acrPassword
+  template:
+    containers:
+    - name: api
+      image: $acrLoginServer/choperia-api:latest
+      env:
+$envVarsYaml
+      resources:
+        cpu: 2.0
+        memory: 4.0Gi
+      volumeMounts:
+      - volumeName: docs
+        mountPath: /app/DOC-IA
+    scale:
+      minReplicas: 1
+      maxReplicas: 5
+    volumes:
+    - name: docs
+      storageType: AzureFile
+      storageName: documents-storage
+"@
+        
+        $tempYaml = "app_bootstrap_$(Get-Date -Format 'yyyyMMddHHmmss').yaml"
+        # Escrever sem BOM (Byte Order Mark) para evitar erro de parsing no Azure CLI
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($tempYaml, $yamlContent, $utf8NoBom)
+        
+        Write-Host "  [INFO] YAML gerado em: $tempYaml" -ForegroundColor Cyan
+        
+        $ErrorActionPreference = "Continue"
+        try {
+            $yamlOutput = az containerapp create `
+                --name $ApiApp `
+                --resource-group $ResourceGroup `
+                --yaml $tempYaml 2>&1
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Container App criado com volume" -ForegroundColor Green
+                Remove-Item $tempYaml -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "  [ERRO] Falha ao criar com YAML (exit code: $LASTEXITCODE)" -ForegroundColor Red
+                Write-Host "  [ERRO] Saída do comando:" -ForegroundColor Red
+                $yamlOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+                Write-Host "  [INFO] YAML mantido em: $tempYaml para inspeção" -ForegroundColor Cyan
+                Write-Host "  [AVISO] Tentando criar sem volume..." -ForegroundColor Yellow
+                # Fallback: criar sem volume
+                az containerapp create `
+                    --name $ApiApp `
+                    --resource-group $ResourceGroup `
+                    --environment $Environment `
+                    --image "$acrLoginServer/choperia-api:latest" `
+                    --registry-server $acrLoginServer `
+                    --registry-username $acrUsername `
+                    --registry-password $acrPassword `
+                    --target-port 8000 `
+                    --ingress external `
+                    --cpu 2.0 `
+                    --memory 4.0Gi `
+                    --min-replicas 1 `
+                    --max-replicas 5 `
+                    --env-vars $envVars 2>&1 | Out-Null
+                Write-Host "  [AVISO] Container App criado sem volume. Configure manualmente via portal." -ForegroundColor Yellow
+                Write-Host "  [INFO] YAML de debug mantido em: $tempYaml" -ForegroundColor Cyan
+            }
+        } catch {
+            Write-Host "  [ERRO] Exceção ao criar Container App: $_" -ForegroundColor Red
+            Write-Host "  [INFO] YAML mantido em: $tempYaml para inspeção" -ForegroundColor Cyan
+        }
+        
+        $ErrorActionPreference = "Stop"
+    } else {
+        # Criar sem YAML (fallback quando não consegue obter envId)
+        Write-Host "  [INFO] Criando Container App sem volume (fallback)..." -ForegroundColor Yellow
+        $ErrorActionPreference = "Continue"
+        az containerapp create `
+            --name $ApiApp `
+            --resource-group $ResourceGroup `
+            --environment $Environment `
+            --image "$acrLoginServer/choperia-api:latest" `
+            --registry-server $acrLoginServer `
+            --registry-username $acrUsername `
+            --registry-password $acrPassword `
+            --target-port 8000 `
+            --ingress external `
+            --cpu 2.0 `
+            --memory 4.0Gi `
+            --min-replicas 1 `
+            --max-replicas 5 `
+            --env-vars $envVars 2>&1 | Out-Null
+        Write-Host "  [AVISO] Container App criado sem volume. Configure manualmente via portal." -ForegroundColor Yellow
+        $ErrorActionPreference = "Stop"
+    }
+} else {
+    Write-Host "[OK] API Container App já existe" -ForegroundColor Green
+    
+    # Verificar se o volume está configurado
+    Write-Host "[INFO] Verificando se volume de documentos está configurado..." -ForegroundColor Yellow
+    $ErrorActionPreference = "Continue"
+    $currentVolumes = az containerapp show --name $ApiApp --resource-group $ResourceGroup --query "properties.template.volumes" -o json 2>$null | ConvertFrom-Json
+    $ErrorActionPreference = "Stop"
+    
+    $hasVolume = $false
+    if ($currentVolumes) {
+        foreach ($vol in $currentVolumes) {
+            if ($vol.name -eq "docs") {
+                $hasVolume = $true
+                break
+            }
+        }
+    }
+    
+    if (-not $hasVolume) {
+        Write-Host "[AVISO] Volume de documentos não está configurado!" -ForegroundColor Yellow
+        Write-Host "[INFO] Execute: .\infra\fix_volume_export_and_update.ps1 para adicionar o volume" -ForegroundColor Cyan
+    } else {
+        Write-Host "[OK] Volume de documentos já está configurado" -ForegroundColor Green
+    }
+}
+
+Write-Host ""

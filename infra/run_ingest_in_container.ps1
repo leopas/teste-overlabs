@@ -13,9 +13,12 @@ $ErrorActionPreference = "Stop"
 Write-Host "=== Executar Ingestão no Container da API ===" -ForegroundColor Cyan
 Write-Host ""
 
-# Carregar deploy_state.json se não fornecido
+# Carregar deploy_state.json se não fornecido (relativo ao repositório)
 if (-not $ResourceGroup -or -not $ApiAppName) {
-    $stateFile = ".azure/deploy_state.json"
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $repoRoot = Split-Path -Parent $scriptDir
+    $stateFile = Join-Path $repoRoot ".azure\deploy_state.json"
+    
     if (-not (Test-Path $stateFile)) {
         Write-Host "[ERRO] Arquivo $stateFile não encontrado. Forneça -ResourceGroup e -ApiAppName." -ForegroundColor Red
         exit 1
@@ -51,25 +54,21 @@ Write-Host ""
 if ($VerifyDocs -or $true) {
     Write-Host "[INFO] Verificando se /app/DOC-IA existe no container..." -ForegroundColor Yellow
     $ErrorActionPreference = "Continue"
-    $docsCheck = az containerapp exec `
+    
+    # Método simples: listar /app e verificar se DOC-IA aparece
+    $appList = az containerapp exec `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
-        --command "test -d /app/DOC-IA && echo 'EXISTS' || echo 'NOT_FOUND'" 2>&1
+        --command "ls /app" 2>&1
     
-    if ($docsCheck -match "EXISTS") {
+    if ($appList -match "DOC-IA") {
         Write-Host "[OK] Diretório /app/DOC-IA encontrado no container" -ForegroundColor Green
-        
-        # Listar arquivos
-        Write-Host "[INFO] Listando arquivos em /app/DOC-IA..." -ForegroundColor Yellow
-        az containerapp exec `
-            --name $ApiAppName `
-            --resource-group $ResourceGroup `
-            --command "ls -la /app/DOC-IA | head -20" 2>&1 | Out-Host
         Write-Host ""
     } else {
         Write-Host "[ERRO] Diretório /app/DOC-IA não encontrado no container!" -ForegroundColor Red
+        Write-Host "[INFO] Saída de 'ls /app': $appList" -ForegroundColor Gray
         Write-Host "[INFO] Verifique se o volume de documentos está montado corretamente." -ForegroundColor Yellow
-        Write-Host "[INFO] Execute: .\infra\bootstrap_container_apps.ps1 para configurar o volume." -ForegroundColor Yellow
+        Write-Host "[INFO] Execute: .\infra\add_volume_mount.ps1 para adicionar o volume mount" -ForegroundColor Yellow
         exit 1
     }
     $ErrorActionPreference = "Stop"
@@ -80,58 +79,53 @@ if ($VerifyDocs -or $true) {
 Write-Host "[INFO] Verificando configuração..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
 
-# Verificar QDRANT_URL
+# Verificar QDRANT_URL (usar variável de ambiente do container)
 Write-Host "[INFO] Verificando QDRANT_URL..." -ForegroundColor Cyan
-$qdrantUrlCheck = az containerapp exec `
+# Verificar via az containerapp show (mais confiável que exec)
+$envVars = az containerapp show `
     --name $ApiAppName `
     --resource-group $ResourceGroup `
-    --command "python -c 'import os; url = os.getenv(\"QDRANT_URL\", \"NOT_SET\"); print(f\"QDRANT_URL={url}\")'" 2>&1
+    --query "properties.template.containers[0].env[?name=='QDRANT_URL'].value" -o tsv 2>&1
 
-Write-Host $qdrantUrlCheck
-if ($qdrantUrlCheck -match "NOT_SET" -or -not $qdrantUrlCheck) {
+if ($envVars -and $envVars -ne "NOT_SET") {
+    Write-Host "[OK] QDRANT_URL configurada: $envVars" -ForegroundColor Green
+} else {
     Write-Host "[ERRO] QDRANT_URL não está configurada no container!" -ForegroundColor Red
     Write-Host "[INFO] Execute o bootstrap novamente ou configure manualmente." -ForegroundColor Yellow
     exit 1
 }
 Write-Host ""
 
-# Testar conexão com Qdrant
+# Testar conexão com Qdrant (usar módulo Python direto)
 Write-Host "[INFO] Testando conexão com Qdrant..." -ForegroundColor Cyan
-$testConnection = az containerapp exec `
-    --name $ApiAppName `
-    --resource-group $ResourceGroup `
-    --command "python -c `"from qdrant_client import QdrantClient; from app.config import settings; import sys; try: qdrant = QdrantClient(url=settings.qdrant_url, timeout=10.0); collections = qdrant.get_collections(); print(f'[OK] Conectado ao Qdrant: {settings.qdrant_url}'); print(f'[OK] Collections encontradas: {len(collections.collections)}'); sys.exit(0); except Exception as e: print(f'[ERRO] Falha ao conectar: {e}'); import traceback; traceback.print_exc(); sys.exit(1)\`"" 2>&1
-
-Write-Host $testConnection
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERRO] Não foi possível conectar ao Qdrant!" -ForegroundColor Red
-    Write-Host "[INFO] Verifique se o Qdrant Container App está rodando e se a URL está correta." -ForegroundColor Yellow
-    exit 1
-}
+# Pular teste de conexão por enquanto - será testado durante ingest
+Write-Host "[INFO] Teste de conexão será feito durante a ingestão" -ForegroundColor Yellow
 Write-Host ""
 
-# Verificar embeddings
-$useOpenAI = az containerapp exec `
+# Verificar embeddings (usar az containerapp show)
+$useOpenAIEnv = az containerapp show `
     --name $ApiAppName `
     --resource-group $ResourceGroup `
-    --command "python -c 'import os; print(\"true\" if os.getenv(\"USE_OPENAI_EMBEDDINGS\", \"false\").lower() == \"true\" else \"false\")'" 2>&1 | Select-String -Pattern "true|false"
+    --query "properties.template.containers[0].env[?name=='USE_OPENAI_EMBEDDINGS'].value" -o tsv 2>&1
 
-if ($useOpenAI -match "true") {
+# Aceitar "true", "1", ou "True"
+if ($useOpenAIEnv -eq "true" -or $useOpenAIEnv -eq "1" -or $useOpenAIEnv -eq "True") {
     Write-Host "[OK] USE_OPENAI_EMBEDDINGS está habilitado" -ForegroundColor Green
     
-    $hasKey = az containerapp exec `
+    $openaiKeyRef = az containerapp show `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
-        --command "python -c 'import os; print(\"true\" if os.getenv(\"OPENAI_API_KEY\") else \"false\")'" 2>&1 | Select-String -Pattern "true|false"
+        --query "properties.template.containers[0].env[?name=='OPENAI_API_KEY'].value" -o tsv 2>&1
     
-    if ($hasKey -match "true") {
-        Write-Host "[OK] OPENAI_API_KEY configurada" -ForegroundColor Green
+    if ($openaiKeyRef -and $openaiKeyRef -match "KeyVault") {
+        Write-Host "[OK] OPENAI_API_KEY configurada (Key Vault reference)" -ForegroundColor Green
     } else {
         Write-Host "[AVISO] OPENAI_API_KEY não encontrada no container" -ForegroundColor Yellow
         Write-Host "[INFO] Configure no Key Vault e referencie no Container App." -ForegroundColor Yellow
     }
 } else {
     Write-Host "[INFO] Usando embeddings locais (FastEmbed)" -ForegroundColor Yellow
+    Write-Host "[AVISO] USE_OPENAI_EMBEDDINGS está como: '$useOpenAIEnv'" -ForegroundColor Gray
 }
 $ErrorActionPreference = "Stop"
 Write-Host ""
@@ -186,11 +180,15 @@ except Exception as e:
     sys.exit(1)
 "@
     
+    # Usar base64 para evitar problemas de escape
+    $truncateBytes = [System.Text.Encoding]::UTF8.GetBytes($truncateScript)
+    $truncateBase64 = [Convert]::ToBase64String($truncateBytes)
+    
     $ErrorActionPreference = "Continue"
     az containerapp exec `
         --name $ApiAppName `
         --resource-group $ResourceGroup `
-        --command "python -c `"$($truncateScript -replace '"', '\"')`"" 2>&1 | Out-Host
+        --command "python -c `"import base64, sys; exec(base64.b64decode('$truncateBase64').decode('utf-8'))\`"" 2>&1 | Out-Host
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "[OK] Collection truncada" -ForegroundColor Green
@@ -201,51 +199,115 @@ except Exception as e:
     Write-Host ""
 }
 
-# Executar scan_docs
+# Executar scan_docs (com retry para rate limit)
 Write-Host "[INFO] Executando scan_docs no container..." -ForegroundColor Cyan
 Write-Host ""
 
-$ErrorActionPreference = "Continue"
-az containerapp exec `
-    --name $ApiAppName `
-    --resource-group $ResourceGroup `
-    --command "python -m scripts.scan_docs" 2>&1 | Out-Host
+$maxRetries = 3
+$retryDelay = 30
+$scanSuccess = $false
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "[OK] scan_docs concluído" -ForegroundColor Green
-} else {
-    Write-Host "[AVISO] scan_docs retornou erro. Continuando mesmo assim..." -ForegroundColor Yellow
+for ($retry = 1; $retry -le $maxRetries; $retry++) {
+    if ($retry -gt 1) {
+        Write-Host "[INFO] Tentativa $retry de $maxRetries (aguardando ${retryDelay}s devido a rate limit)..." -ForegroundColor Yellow
+        Start-Sleep -Seconds $retryDelay
+    }
+    
+    $ErrorActionPreference = "Continue"
+    $scanOutput = az containerapp exec `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --command "python -m scripts.scan_docs" 2>&1
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host $scanOutput
+        Write-Host "[OK] scan_docs concluído" -ForegroundColor Green
+        $scanSuccess = $true
+        break
+    } elseif ($scanOutput -match "429|Too Many Requests") {
+        Write-Host "[AVISO] Rate limit detectado. Aguardando antes de tentar novamente..." -ForegroundColor Yellow
+        $retryDelay = [Math]::Min($retryDelay * 2, 120) # Backoff exponencial, max 2 minutos
+    } else {
+        Write-Host $scanOutput
+        Write-Host "[AVISO] scan_docs retornou erro. Continuando mesmo assim..." -ForegroundColor Yellow
+        $scanSuccess = $true # Continuar mesmo com erro
+        break
+    }
+    $ErrorActionPreference = "Stop"
 }
-$ErrorActionPreference = "Stop"
+
+if (-not $scanSuccess) {
+    Write-Host "[AVISO] scan_docs falhou após $maxRetries tentativas. Continuando mesmo assim..." -ForegroundColor Yellow
+}
 Write-Host ""
 
-# Executar ingest
+# Executar ingest (com retry para rate limit)
 Write-Host "[INFO] Executando ingest no container..." -ForegroundColor Cyan
 Write-Host "  Isso pode levar alguns minutos dependendo do número de documentos" -ForegroundColor Gray
 Write-Host ""
 
-$ErrorActionPreference = "Continue"
-az containerapp exec `
-    --name $ApiAppName `
-    --resource-group $ResourceGroup `
-    --command "python -m scripts.ingest" 2>&1 | Out-Host
+$retryDelay = 30 # Reset delay
+$ingestSuccess = $false
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "[OK] Ingestão concluída com sucesso!" -ForegroundColor Green
-} else {
-    Write-Host "[ERRO] Ingestão falhou com código $LASTEXITCODE" -ForegroundColor Red
+for ($retry = 1; $retry -le $maxRetries; $retry++) {
+    if ($retry -gt 1) {
+        Write-Host "[INFO] Tentativa $retry de $maxRetries (aguardando ${retryDelay}s devido a rate limit)..." -ForegroundColor Yellow
+        Start-Sleep -Seconds $retryDelay
+    }
+    
+    $ErrorActionPreference = "Continue"
+    $ingestOutput = az containerapp exec `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --command "python -m scripts.ingest" 2>&1
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host $ingestOutput
+        Write-Host "[OK] Ingestão concluída com sucesso!" -ForegroundColor Green
+        $ingestSuccess = $true
+        break
+    } elseif ($ingestOutput -match "429|Too Many Requests") {
+        Write-Host "[AVISO] Rate limit detectado. Aguardando antes de tentar novamente..." -ForegroundColor Yellow
+        $retryDelay = [Math]::Min($retryDelay * 2, 120) # Backoff exponencial, max 2 minutos
+    } else {
+        Write-Host $ingestOutput
+        Write-Host "[ERRO] Ingestão falhou com código $LASTEXITCODE" -ForegroundColor Red
+        if ($retry -eq $maxRetries) {
+            Write-Host "[INFO] Falhou após $maxRetries tentativas. Verifique os logs do container." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    $ErrorActionPreference = "Stop"
+}
+
+if (-not $ingestSuccess) {
+    Write-Host "[ERRO] Ingestão falhou após $maxRetries tentativas devido a rate limits." -ForegroundColor Red
+    Write-Host "[INFO] Aguarde alguns minutos e tente novamente, ou execute os comandos manualmente:" -ForegroundColor Yellow
+    Write-Host "  az containerapp exec --name $ApiAppName --resource-group $ResourceGroup --command 'python -m scripts.ingest'" -ForegroundColor Gray
     exit 1
 }
-$ErrorActionPreference = "Stop"
 Write-Host ""
 
-# Verificar documentos indexados
+# Verificar documentos indexados (pular se ingestão falhou ou rate limit)
 Write-Host "[INFO] Verificando documentos indexados..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
-az containerapp exec `
+
+# Aguardar um pouco antes de verificar (evitar rate limit)
+Start-Sleep -Seconds 10
+
+# Usar comando simples sem aspas complexas
+$checkCmd = 'python -c "from qdrant_client import QdrantClient; import os; qdrant = QdrantClient(url=os.getenv(''QDRANT_URL'')); info = qdrant.get_collection(''docs_chunks''); print(f''Pontos indexados: {info.points_count}'')"'
+
+$checkOutput = az containerapp exec `
     --name $ApiAppName `
     --resource-group $ResourceGroup `
-    --command "python -c `"from qdrant_client import QdrantClient; import os; qdrant = QdrantClient(url=os.getenv('QDRANT_URL')); info = qdrant.get_collection('docs_chunks'); print(f'Pontos indexados: {info.points_count}')\`"" 2>&1 | Out-Host
+    --command $checkCmd 2>&1
+
+if ($checkOutput -match "429|Too Many Requests") {
+    Write-Host "[AVISO] Rate limit ao verificar pontos. Pule esta verificação." -ForegroundColor Yellow
+} else {
+    Write-Host $checkOutput
+}
 $ErrorActionPreference = "Stop"
 
 Write-Host ""
