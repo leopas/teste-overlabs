@@ -34,8 +34,8 @@ if ($LASTEXITCODE -ne 0) {
         --image redis:7-alpine `
         --target-port 6379 `
         --ingress internal `
-        --command "redis-server" `
-        --args "--appendonly" "no" "--protected-mode" "no" "--bind" "0.0.0.0" `
+        --command "sh" `
+        --args "-lc" "exec redis-server --appendonly no --protected-mode no --bind 0.0.0.0" `
         --cpu 0.5 `
         --memory 1.0Gi `
         --min-replicas 1 `
@@ -60,8 +60,8 @@ $ErrorActionPreference = "Continue"
 az containerapp update `
     --name $RedisApp `
     --resource-group $ResourceGroup `
-    --command "redis-server" `
-    --args "--appendonly" "no" "--protected-mode" "no" "--bind" "0.0.0.0" 2>&1 | Out-Null
+    --command "sh" `
+    --args "-lc" "exec redis-server --appendonly no --protected-mode no --bind 0.0.0.0" 2>&1 | Out-Null
 $ErrorActionPreference = "Stop"
 
 if ($LASTEXITCODE -eq 0) {
