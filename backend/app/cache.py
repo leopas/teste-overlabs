@@ -22,7 +22,14 @@ def cache_key_for_excerpt(excerpt_text: str) -> str:
 
 class RedisClient:
     def __init__(self) -> None:
-        self._client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=1.0, socket_timeout=1.0)
+        # Em ACA, 1s pode ser agressivo e causar falsos timeouts (especialmente em cold start).
+        self._client = redis.Redis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=5.0,
+            socket_timeout=5.0,
+            retry_on_timeout=True,
+            health_check_interval=30,
+        )
 
     def ping(self) -> bool:
         return bool(self._client.ping())
@@ -54,4 +61,3 @@ class RedisClient:
         Acesso ao client raw para casos avançados (admin/jobs).
         """
         return self._client
-
