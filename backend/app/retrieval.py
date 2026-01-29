@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
+import socket
+import time
+import traceback
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
@@ -103,15 +108,69 @@ def get_current_embedding_model_name() -> str:
     return "sentence-transformers/all-MiniLM-L6-v2"
 
 
+_QDRANT_READY_LAST_LOG_AT = 0.0
+_QDRANT_READY_LOG_INTERVAL_SECONDS = 30.0
+
+
 class QdrantStore:
     def __init__(self) -> None:
         self._client = QdrantClient(url=settings.qdrant_url, timeout=2.0)
 
     def ready(self) -> bool:
+        global _QDRANT_READY_LAST_LOG_AT
         try:
             self._client.get_collections()
             return True
-        except Exception:
+        except Exception as e:
+            # Log detalhado (throttled) para diagnosticar DNS/porta/TLS no ACA.
+            now = time.time()
+            if now - _QDRANT_READY_LAST_LOG_AT >= _QDRANT_READY_LOG_INTERVAL_SECONDS:
+                _QDRANT_READY_LAST_LOG_AT = now
+                logger = logging.getLogger(__name__)
+                url = settings.qdrant_url
+                parsed = urllib.parse.urlparse(url)
+                host = parsed.hostname or ""
+                scheme = parsed.scheme or ""
+                port = parsed.port or (443 if scheme == "https" else 80)
+
+                dns_ok = False
+                dns_ip = None
+                tcp_ok = False
+                tcp_err = None
+
+                try:
+                    infos = socket.getaddrinfo(host, port)
+                    dns_ip = infos[0][4][0] if infos else None
+                    dns_ok = True
+                except Exception as de:
+                    dns_ok = False
+                    tcp_err = f"dns_error={de!r}"
+
+                if dns_ok:
+                    try:
+                        s = socket.create_connection((host, port), timeout=2.5)
+                        s.close()
+                        tcp_ok = True
+                    except Exception as te:
+                        tcp_ok = False
+                        tcp_err = f"tcp_error={te!r}"
+
+                logger.warning(
+                    "qdrant_ready_failed",
+                    extra={
+                        "qdrant_url": url,
+                        "scheme": scheme,
+                        "host": host,
+                        "port": port,
+                        "dns_ok": dns_ok,
+                        "dns_ip": dns_ip,
+                        "tcp_ok": tcp_ok,
+                        "net_err": tcp_err,
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    },
+                )
             return False
 
     async def search(self, vector: list[float], top_k: int = 8) -> list[RetrievedChunk]:

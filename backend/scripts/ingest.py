@@ -260,6 +260,8 @@ async def main() -> int:
     embedder = get_embeddings_provider()
     print(f"[ingest] Embedder criado: {type(embedder).__name__}", file=sys.stderr)
     
+    # Log do Qdrant URL (não é segredo; essencial para debug de rede no ACA)
+    print(f"[ingest] QDRANT_URL={settings.qdrant_url}", file=sys.stderr)
     qdrant = QdrantClient(url=settings.qdrant_url, timeout=10.0)
 
     indexed = 0
@@ -272,7 +274,8 @@ async def main() -> int:
     collection_name = settings.qdrant_collection
     try:
         qdrant.get_collection(collection_name)
-    except Exception:
+    except Exception as e:
+        print(f"[ingest] get_collection falhou (vai tentar create_collection): {e!r}", file=sys.stderr)
         qdrant.create_collection(
             collection_name=collection_name,
             vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
