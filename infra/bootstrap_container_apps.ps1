@@ -361,6 +361,16 @@ $apiScript = Join-Path $ScriptDir "bootstrap_api.ps1"
     -RedisUrl $redisUrl `
     -EnvFile $EnvFile
 
+# 10.1 Configurar ingress HTTPS do Qdrant e apontar QDRANT_URL da API para o FQDN do ingress
+Write-Host ""
+Write-Host "[INFO] Configurando ingress HTTPS do Qdrant e QDRANT_URL da API..." -ForegroundColor Yellow
+$qdrantIngressScript = Join-Path $ScriptDir "bootstrap_qdrant_ingress_https.ps1"
+& $qdrantIngressScript `
+    -ResourceGroup $ResourceGroup `
+    -QdrantAppName $QdrantApp `
+    -ApiAppName $ApiApp `
+    -SetApiEnv:$true
+
 # 10.5. Upload de documentos para Azure Files
 Write-Host "[INFO] Verificando upload de documentos..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
