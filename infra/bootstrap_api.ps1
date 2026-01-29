@@ -110,7 +110,8 @@ Get-Content $EnvFile | ForEach-Object {
 Write-Host "[INFO] Variáveis encontradas: $($secrets.Count + $nonSecrets.Count) total, $($secrets.Count) secrets, $($nonSecrets.Count) non-secrets" -ForegroundColor Cyan
 Write-Host ""
 
-# Construir env-vars
+# Construir env-vars (separar secrets de non-secrets)
+# Para Container Apps, secrets devem ser criados com keyvaultref: e referenciados com secretref:
 $envVars = @(
     "QDRANT_URL=$QdrantUrl",
     "REDIS_URL=$RedisUrl",
@@ -122,10 +123,13 @@ foreach ($key in $nonSecrets.Keys) {
     $envVars += "$key=$($nonSecrets[$key])"
 }
 
-# Adicionar Key Vault references para secrets
+# Secrets serão adicionados separadamente usando --set-secrets com keyvaultref:
+# e depois referenciados nas env vars com secretref:
+$secretRefs = @{}
 foreach ($key in $secrets.Keys) {
     $kvName = $key.ToLower().Replace('_', '-')
-    $envVars += "$key=@Microsoft.KeyVault(SecretUri=https://$KeyVault.vault.azure.net/secrets/$kvName/)"
+    # Nome do secret interno do Container App (usar o mesmo nome do Key Vault para simplicidade)
+    $secretRefs[$key] = $kvName
 }
 
 # Verificar se já existe
@@ -171,6 +175,17 @@ if ($LASTEXITCODE -ne 0) {
     if ($useYaml) {
         Write-Host "  [INFO] Criando Container App com volume de documentos..." -ForegroundColor Cyan
         
+        # Construir lista de secrets do Key Vault (para Container Apps)
+        $secretsYaml = ""
+        $secretsYaml += "    - name: acr-password`n      value: $acrPassword`n"
+        
+        # Adicionar secrets do Key Vault usando keyVaultUrl (sintaxe correta para Container Apps)
+        foreach ($key in $secrets.Keys) {
+            $kvName = $key.ToLower().Replace('_', '-')
+            $secretUri = "https://$KeyVault.vault.azure.net/secrets/$kvName"
+            $secretsYaml += "    - name: $kvName`n      keyVaultUrl: $secretUri`n"
+        }
+        
         # Construir lista de env vars formatada
         $envVarsYaml = ""
         foreach ($envVar in $envVars) {
@@ -178,18 +193,17 @@ if ($LASTEXITCODE -ne 0) {
             $name = $parts[0]
             $value = $parts[1]
             
-            # Escapar caracteres especiais para YAML
-            if ($value -match '^@Microsoft\.KeyVault') {
-                # Key Vault reference: precisa estar entre aspas porque começa com @
-                $valueEscaped = $value -replace '"', '\"'
-                $envVarsYaml += "      - name: $name`n        value: `"$valueEscaped`"`n"
-            } else {
-                # Valor normal: escapar aspas e caracteres especiais
-                $value = $value -replace '\\', '\\\\'  # Escapar backslashes primeiro
-                $value = $value -replace '"', '\"'      # Escapar aspas
-                $value = $value -replace '`n', '\n'     # Escapar newlines
-                $envVarsYaml += "      - name: $name`n        value: `"$value`"`n"
-            }
+            # Valor normal: escapar aspas e caracteres especiais
+            $value = $value -replace '\\', '\\\\'  # Escapar backslashes primeiro
+            $value = $value -replace '"', '\"'      # Escapar aspas
+            $value = $value -replace '`n', '\n'     # Escapar newlines
+            $envVarsYaml += "      - name: $name`n        value: `"$value`"`n"
+        }
+        
+        # Adicionar env vars que referenciam secrets usando secretRef (sintaxe correta para Container Apps)
+        foreach ($key in $secretRefs.Keys) {
+            $secretName = $secretRefs[$key]
+            $envVarsYaml += "      - name: $key`n        secretRef: $secretName`n"
         }
         
         # YAML no mesmo formato do Qdrant (que funcionou)
@@ -212,8 +226,7 @@ properties:
       username: $acrUsername
       passwordSecretRef: acr-password
     secrets:
-    - name: acr-password
-      value: $acrPassword
+$secretsYaml
   template:
     containers:
     - name: api
@@ -258,7 +271,25 @@ $envVarsYaml
                 $yamlOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
                 Write-Host "  [INFO] YAML mantido em: $tempYaml para inspeção" -ForegroundColor Cyan
                 Write-Host "  [AVISO] Tentando criar sem volume..." -ForegroundColor Yellow
-                # Fallback: criar sem volume
+                # Fallback: criar sem volume usando CLI com sintaxe correta de Container Apps
+                # Primeiro, construir comandos para secrets (keyvaultref) e env vars (secretref)
+                $setSecretsArgs = @()
+                $setSecretsArgs += "acr-password=$acrPassword"
+                foreach ($key in $secrets.Keys) {
+                    $kvName = $key.ToLower().Replace('_', '-')
+                    $secretUri = "https://$KeyVault.vault.azure.net/secrets/$kvName"
+                    $setSecretsArgs += "$kvName=keyvaultref:$secretUri"
+                }
+                
+                $setEnvVarsArgs = @()
+                foreach ($envVar in $envVars) {
+                    $setEnvVarsArgs += $envVar
+                }
+                foreach ($key in $secretRefs.Keys) {
+                    $secretName = $secretRefs[$key]
+                    $setEnvVarsArgs += "$key=secretref:$secretName"
+                }
+                
                 az containerapp create `
                     --name $ApiApp `
                     --resource-group $ResourceGroup `
@@ -273,7 +304,8 @@ $envVarsYaml
                     --memory 4.0Gi `
                     --min-replicas 1 `
                     --max-replicas 5 `
-                    --env-vars $envVars 2>&1 | Out-Null
+                    --set-secrets $setSecretsArgs `
+                    --set-env-vars $setEnvVarsArgs 2>&1 | Out-Null
                 Write-Host "  [AVISO] Container App criado sem volume. Configure manualmente via portal." -ForegroundColor Yellow
                 Write-Host "  [INFO] YAML de debug mantido em: $tempYaml" -ForegroundColor Cyan
             }
@@ -287,6 +319,25 @@ $envVarsYaml
         # Criar sem YAML (fallback quando não consegue obter envId)
         Write-Host "  [INFO] Criando Container App sem volume (fallback)..." -ForegroundColor Yellow
         $ErrorActionPreference = "Continue"
+        
+        # Construir comandos para secrets (keyvaultref) e env vars (secretref)
+        $setSecretsArgs = @()
+        $setSecretsArgs += "acr-password=$acrPassword"
+        foreach ($key in $secrets.Keys) {
+            $kvName = $key.ToLower().Replace('_', '-')
+            $secretUri = "https://$KeyVault.vault.azure.net/secrets/$kvName"
+            $setSecretsArgs += "$kvName=keyvaultref:$secretUri"
+        }
+        
+        $setEnvVarsArgs = @()
+        foreach ($envVar in $envVars) {
+            $setEnvVarsArgs += $envVar
+        }
+        foreach ($key in $secretRefs.Keys) {
+            $secretName = $secretRefs[$key]
+            $setEnvVarsArgs += "$key=secretref:$secretName"
+        }
+        
         az containerapp create `
             --name $ApiApp `
             --resource-group $ResourceGroup `
@@ -301,7 +352,8 @@ $envVarsYaml
             --memory 4.0Gi `
             --min-replicas 1 `
             --max-replicas 5 `
-            --env-vars $envVars 2>&1 | Out-Null
+            --set-secrets $setSecretsArgs `
+            --set-env-vars $setEnvVarsArgs 2>&1 | Out-Null
         Write-Host "  [AVISO] Container App criado sem volume. Configure manualmente via portal." -ForegroundColor Yellow
         $ErrorActionPreference = "Stop"
     }
