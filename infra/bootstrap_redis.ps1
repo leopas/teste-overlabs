@@ -61,33 +61,93 @@ if ($LASTEXITCODE -eq 0) {
 $ErrorActionPreference = "Stop"
 Write-Host ""
 
-# Criar Redis Container App via CLI (contorna parsing do Azure CLI com valores iniciando em '-')
-#
-# Nota: algumas versões do Azure CLI/extension tratam valores como "-lc" como flags,
-# então usamos a forma "--args=-lc" (com '=') e colocamos o resto do comando em uma string única.
-Write-Host "[INFO] Criando Redis Container App..." -ForegroundColor Yellow
+function Invoke-Az {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$Args
+    )
+    $ErrorActionPreference = "Continue"
+    $out = & az @Args 2>&1
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($code -ne 0) {
+        throw ($out | Out-String)
+    }
+    return $out
+}
 
-$ErrorActionPreference = "Continue"
-$out = az containerapp create `
-    --name $RedisApp `
-    --resource-group $ResourceGroup `
-    --environment $Environment `
-    --image redis:7-alpine `
-    --ingress internal `
-    --target-port 6379 `
-    --transport tcp `
-    --cpu 0.5 `
-    --memory 1.0Gi `
-    --min-replicas 1 `
-    --max-replicas 1 `
-    --command "sh" `
-    --args=-lc "exec redis-server --appendonly no --protected-mode no --bind 0.0.0.0" 2>&1
-$ErrorActionPreference = "Stop"
+# Criar Redis Container App com configurações mínimas (sem depender de --command/--args)
+Write-Host "[INFO] Criando Redis Container App (base)..." -ForegroundColor Yellow
+try {
+    Invoke-Az -Args @(
+        "containerapp","create",
+        "--name",$RedisApp,
+        "--resource-group",$ResourceGroup,
+        "--environment",$Environment,
+        "--image","redis:7-alpine",
+        "--ingress","internal",
+        "--target-port","6379",
+        "--transport","tcp",
+        "--cpu","0.5",
+        "--memory","1.0Gi",
+        "--min-replicas","1",
+        "--max-replicas","1"
+    ) | Out-Null
+    Write-Host "[OK] Redis Container App criado (base)" -ForegroundColor Green
+} catch {
+    Write-Host "[ERRO] Falha ao criar Redis Container App (base)" -ForegroundColor Red
+    Write-Host $_
+    exit 1
+}
 
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "[OK] Redis Container App criado" -ForegroundColor Green
-} else {
-    Write-Host "[ERRO] Falha ao criar Redis Container App" -ForegroundColor Red
-    if ($out) { Write-Host $out }
+# Aplicar command/args via ARM (az rest) para evitar bugs de parsing do PowerShell/Azure CLI
+Write-Host "[INFO] Aplicando command/args do Redis via az rest..." -ForegroundColor Yellow
+try {
+    $sub = (Invoke-Az -Args @("account","show","--query","id","-o","tsv")).Trim()
+    $apiVersion = "2026-01-01"
+    # IMPORTANTE: em strings com interpolação, "$RedisApp?api-version=..." pode ser interpretado
+    # como uma variável "RedisApp?api" inexistente, removendo o nome do app da URL.
+    # Por isso montamos o base e concatenamos o querystring separadamente.
+    $baseUrl = "https://management.azure.com/subscriptions/$sub/resourceGroups/$ResourceGroup/providers/Microsoft.App/containerApps/$RedisApp"
+    $url = "${baseUrl}?api-version=$apiVersion"
+
+    $appObj = (Invoke-Az -Args @("rest","--method","get","--url",$url)) | ConvertFrom-Json
+    if (-not $appObj.properties -or -not $appObj.properties.template -or -not $appObj.properties.template.containers -or $appObj.properties.template.containers.Count -lt 1) {
+        throw "Resposta do az rest GET não contém properties.template.containers[0]."
+    }
+
+    # IMPORTANTE: não podemos mandar um container "parcial" (sem image), senão o ARM rejeita.
+    # Então pegamos o container atual e só alteramos command/args, preservando image/resources/env/etc.
+    $container = $appObj.properties.template.containers[0]
+    # Em algumas respostas, 'command'/'args' não existem como propriedades no PSCustomObject.
+    # Usamos Add-Member para criar/atualizar de forma segura.
+    $container | Add-Member -NotePropertyName "command" -NotePropertyValue @("redis-server") -Force
+    $container | Add-Member -NotePropertyName "args" -NotePropertyValue @("--appendonly","no","--protected-mode","no","--bind","0.0.0.0") -Force
+
+    $patch = @{
+        properties = @{
+            template = @{
+                containers = @($container)
+            }
+        }
+    }
+
+    $tmpJson = Join-Path $env:TEMP "aca-redis-template-patch.json"
+    $patch | ConvertTo-Json -Depth 20 | Out-File -Encoding utf8 $tmpJson
+
+    # PATCH costuma funcionar; se seu tenant exigir PUT, troque method para put.
+    Invoke-Az -Args @(
+        "rest",
+        "--method","patch",
+        "--url",$url,
+        "--headers","Content-Type=application/json",
+        "--body","@$tmpJson"
+    ) | Out-Null
+
+    Write-Host "[OK] command/args aplicados (nova revision deve ser criada)" -ForegroundColor Green
+} catch {
+    Write-Host "[ERRO] Falha ao aplicar command/args via az rest" -ForegroundColor Red
+    Write-Host $_
+    Write-Host "[INFO] Workaround: tente trocar PATCH por PUT no script (ou me mande o erro completo do az rest)." -ForegroundColor Yellow
     exit 1
 }
