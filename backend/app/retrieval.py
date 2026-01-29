@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import socket
+import sys
 import time
 import traceback
 import urllib.parse
@@ -155,22 +156,19 @@ class QdrantStore:
                         tcp_ok = False
                         tcp_err = f"tcp_error={te!r}"
 
-                logger.warning(
-                    "qdrant_ready_failed",
-                    extra={
-                        "qdrant_url": url,
-                        "scheme": scheme,
-                        "host": host,
-                        "port": port,
-                        "dns_ok": dns_ok,
-                        "dns_ip": dns_ip,
-                        "tcp_ok": tcp_ok,
-                        "net_err": tcp_err,
-                        "error_type": type(e).__name__,
-                        "error": str(e),
-                        "traceback": traceback.format_exc(),
-                    },
+                # IMPORTANTe: o logger padrão do Uvicorn geralmente não imprime "extra".
+                # Então também imprimimos uma linha explícita no stderr (vai para Log Stream do ACA).
+                tb = traceback.format_exc()
+                msg = (
+                    "[qdrant_ready_failed] "
+                    f"qdrant_url={url!r} scheme={scheme!r} host={host!r} port={port} "
+                    f"dns_ok={dns_ok} dns_ip={dns_ip!r} tcp_ok={tcp_ok} net_err={tcp_err!r} "
+                    f"error_type={type(e).__name__} error={e!r} "
+                    f"endpoint_hint={url.rstrip('/') + '/collections'!r}"
                 )
+                print(msg, file=sys.stderr)
+                print(tb, file=sys.stderr)
+                logger.warning(msg)
             return False
 
     async def search(self, vector: list[float], top_k: int = 8) -> list[RetrievedChunk]:
