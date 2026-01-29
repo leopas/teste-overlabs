@@ -22,7 +22,10 @@ properties:
       passwordSecretRef: acr-password
     secrets:
     - name: acr-password
-      value: "<placeholder-acr-password>"
+      # Armazene o password do ACR no Key Vault (recomendado) e referencie aqui.
+      # Alternativa: se você usa ACR com Managed Identity, remova username/passwordSecretRef.
+      keyVaultUrl: https://<kv-name>.vault.azure.net/secrets/acr-password
+      identity: system
     - name: mysql-password
       keyVaultUrl: https://<kv-name>.vault.azure.net/secrets/mysql-password
       identity: system
