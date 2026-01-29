@@ -28,6 +28,68 @@ param(
     [string]$EnvFile = ".env"
 )
 
+function Protect-ContainerAppYamlSecrets {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Yaml
+    )
+
+    # Remove valores de `properties.configuration.secrets[*].value` do YAML exportado
+    # para evitar vazamento acidental em arquivos de debug.
+    $lines = $Yaml -split "`r?`n"
+    $out = New-Object System.Collections.Generic.List[string]
+
+    $inSecrets = $false
+    $secretsIndent = 0
+
+    for ($i = 0; $i -lt $lines.Length; $i++) {
+        $line = $lines[$i]
+
+        if (-not $inSecrets) {
+            if ($line -match '^(?<indent>\s*)secrets:\s*$') {
+                $inSecrets = $true
+                $secretsIndent = $matches['indent'].Length
+                $out.Add($line)
+                continue
+            }
+
+            $out.Add($line)
+            continue
+        }
+
+        # Dentro do bloco `secrets:` — detectar fim do bloco (mesma indentação ou menor e não é item de lista)
+        if ($line -notmatch '^\s*$') {
+            $lineIndent = 0
+            if ($line -match '^(?<indent>\s*)') {
+                $lineIndent = $matches['indent'].Length
+            }
+
+            if ($lineIndent -le $secretsIndent -and $line -notmatch '^\s*-' -and $line -notmatch '^\s*#') {
+                $inSecrets = $false
+                $secretsIndent = 0
+
+                # Reprocessa a linha fora do bloco secrets (sem perder este conteúdo)
+                if ($line -match '^(?<indent>\s*)secrets:\s*$') {
+                    $inSecrets = $true
+                    $secretsIndent = $matches['indent'].Length
+                }
+
+                $out.Add($line)
+                continue
+            }
+        }
+
+        if ($inSecrets -and $line -match '^(?<indent>\s*)value:\s*.*$') {
+            $out.Add("$($matches['indent'])value: `"<redacted>`"")
+            continue
+        }
+
+        $out.Add($line)
+    }
+
+    return ($out -join "`n")
+}
+
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== Bootstrap API Container App ===" -ForegroundColor Cyan
@@ -554,7 +616,8 @@ if ($principalId) {
                                 $utf8NoBom2 = New-Object System.Text.UTF8Encoding $false
                                 $effectiveYaml = az containerapp show --name $ApiApp --resource-group $ResourceGroup -o yaml 2>$null
                                 if ($effectiveYaml) {
-                                    [System.IO.File]::WriteAllText($yamlOut, $effectiveYaml, $utf8NoBom2)
+                                    $effectiveYamlSafe = Protect-ContainerAppYamlSecrets -Yaml $effectiveYaml
+                                    [System.IO.File]::WriteAllText($yamlOut, $effectiveYamlSafe, $utf8NoBom2)
                                     Write-Host "  [OK] YAML efetivo salvo em: $yamlOut" -ForegroundColor Green
                                 } else {
                                     Write-Host "  [AVISO] Não foi possível exportar YAML efetivo do recurso (az containerapp show -o yaml)" -ForegroundColor Yellow
