@@ -55,6 +55,15 @@ jobs:
           fi
           echo "✅ deploy_state.json encontrado"
           cat .azure/deploy_state.json | jq '.'
+      
+      - name: Validate Key Vault syntax
+        shell: pwsh
+        run: |
+          if [ -f infra/validate_keyvault_syntax.ps1 ]; then
+            pwsh -File infra/validate_keyvault_syntax.ps1
+          else
+            echo "⚠️  Script de validação não encontrado, pulando..."
+          fi
 
   build:
     name: Build and Push

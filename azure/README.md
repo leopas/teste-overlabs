@@ -79,13 +79,36 @@ az keyvault create \
 az keyvault secret set --vault-name rag-overlabs-kv --name "OpenAIApiKey" --value "<sua-chave>"
 az keyvault secret set --vault-name rag-overlabs-kv --name "AuditEncKey" --value "<chave-base64-32-bytes>"
 
-# Atualizar Container App para usar Key Vault
+# Atualizar Container App para usar Key Vault (sintaxe correta do Container Apps)
+# 1. Habilitar Managed Identity
+az containerapp identity assign \
+  --name rag-overlabs-app \
+  --resource-group rag-overlabs-rg \
+  --system-assigned
+
+# 2. Conceder permissão no Key Vault
+PRINCIPAL_ID=$(az containerapp show --name rag-overlabs-app --resource-group rag-overlabs-rg --query "identity.principalId" -o tsv)
+KV_RESOURCE_ID=$(az keyvault show --name rag-overlabs-kv --resource-group rag-overlabs-rg --query id -o tsv)
+az role assignment create \
+  --assignee $PRINCIPAL_ID \
+  --role "Key Vault Secrets User" \
+  --scope $KV_RESOURCE_ID
+
+# 3. Configurar secrets (keyvaultref)
+az containerapp update \
+  --name rag-overlabs-app \
+  --resource-group rag-overlabs-rg \
+  --set-secrets \
+    "openai-api-key=keyvaultref:https://rag-overlabs-kv.vault.azure.net/secrets/OpenAIApiKey" \
+    "audit-enc-key-b64=keyvaultref:https://rag-overlabs-kv.vault.azure.net/secrets/AuditEncKey"
+
+# 4. Configurar env vars (secretRef)
 az containerapp update \
   --name rag-overlabs-app \
   --resource-group rag-overlabs-rg \
   --set-env-vars \
-    "OPENAI_API_KEY=@Microsoft.KeyVault(SecretUri=https://rag-overlabs-kv.vault.azure.net/secrets/OpenAIApiKey/)" \
-    "AUDIT_ENC_KEY_B64=@Microsoft.KeyVault(SecretUri=https://rag-overlabs-kv.vault.azure.net/secrets/AuditEncKey/)"
+    "OPENAI_API_KEY=secretref:openai-api-key" \
+    "AUDIT_ENC_KEY_B64=secretref:audit-enc-key-b64"
 ```
 
 ### 3. Upload de Documentos

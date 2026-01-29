@@ -140,6 +140,9 @@ resource qdrantApp 'Microsoft.App/containerApps@2023-05-01' = {
 resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: '${projectName}-app'
   location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     managedEnvironmentId: containerEnv.id
     configuration: {
@@ -160,14 +163,17 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
         {
           name: 'mysql-password'
           keyVaultUrl: '${keyVaultUri}secrets/mysql-password'
+          identity: 'system'
         }
         {
           name: 'openai-api-key'
           keyVaultUrl: '${keyVaultUri}secrets/openai-api-key'
+          identity: 'system'
         }
         {
           name: 'audit-enc-key-b64'
           keyVaultUrl: '${keyVaultUri}secrets/audit-enc-key-b64'
+          identity: 'system'
         }
       ] : []
     }

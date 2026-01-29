@@ -1,0 +1,147 @@
+# Arquivos sensíveis - NUNCA commitar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.kdbx
+credentials*.json
+token*.json
+service-account*.json
+service_account*.json
+*-sa.json
+*_sa.json
+id_rsa
+id-rsa
+id_ed25519
+id-ed25519
+known_hosts
+authorized_keys
+secrets*.json
+secrets*.yaml
+secrets*.yml
+private*.json
+private*.yaml
+private*.yml
+oauth*.json
+gcp*.json
+firebase*.json
+apikey*.json
+
+# Diretórios sensíveis
+/secrets/
+/secret/
+/keys/
+/.ssh/
+/.aws/
+/private/
+/credentials/
+/.azure/*
+!.azure/.gitkeep
+!.azure/deploy_state.json
+
+# YAMLs artefato de Container App (gerados por bootstrap_api.ps1 com timestamp)
+app_bootstrap_*.yaml
+app_recreate_*.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Testes e coverage
+.hypothesis/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+*.log
+test-results/
+.nyc_output/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Arquivos grandes/gerados (opcional - descomente se necessário)
+# repo_concat_all.md
+# *.zip
+
+# Certificados (manter apenas se necessário para build)
+# Se o DigiCertGlobalRootCA.crt.pem for necessário, adicione exceção:
+# !certs/DigiCertGlobalRootCA.crt.pem
+
+# Bancos de dados locais
+*.sqlite
+*.sqlite3
+*.db
+*.fdb
+*.mdb
+*.accdb
+
+# Arquivos temporários
+*.tmp
+*.temp
+.cache/
+tmp/
+temp/
+
+# Logs
+*.log
+logs/
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+desktop.ini
