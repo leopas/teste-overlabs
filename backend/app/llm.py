@@ -46,8 +46,36 @@ class OpenAILLM(LLMProvider):
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
         self._client = httpx.AsyncClient(timeout=15.0)
+        # Log da chave para debug (apenas primeiros 10 caracteres e tamanho)
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+        if api_key:
+            key_preview = api_key[:10] if len(api_key) >= 10 else api_key
+            key_length = len(api_key)
+            log_msg = f"[OpenAILLM.__init__] API Key: preview='{key_preview}...', tamanho={key_length} caracteres"
+            print(log_msg, file=sys.stderr)
+            logger.info(log_msg)
+        else:
+            log_msg = "[OpenAILLM.__init__] API Key esta vazia ou None!"
+            print(log_msg, file=sys.stderr)
+            logger.warning(log_msg)
 
     async def generate(self, question: str, evidence: list[str]) -> dict[str, Any]:
+        # Log da chave antes de cada chamada
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+        if self._api_key:
+            key_preview = self._api_key[:10] if len(self._api_key) >= 10 else self._api_key
+            key_length = len(self._api_key)
+            log_msg = f"[OpenAILLM.generate] API Key antes da chamada: preview='{key_preview}...', tamanho={key_length} caracteres"
+            print(log_msg, file=sys.stderr)
+            logger.info(log_msg)
+        else:
+            log_msg = "[OpenAILLM.generate] API Key esta vazia ou None antes da chamada!"
+            print(log_msg, file=sys.stderr)
+            logger.error(log_msg)
         system = (
             "Você é um assistente de QA estrito. Responda SOMENTE com base nos TRECHOS fornecidos.\n"
             "Se não houver evidência suficiente, recuse.\n"

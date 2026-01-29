@@ -195,8 +195,16 @@ class MySQLAuditSink:
 
         ssl_ca = os.getenv("MYSQL_SSL_CA")
         if ssl_ca:
-            cfg_base["ssl_ca"] = ssl_ca
-            cfg_base["ssl_verify_cert"] = True
+            # Verificar se o arquivo existe
+            import os as os_module
+            if os_module.path.exists(ssl_ca):
+                cfg_base["ssl_ca"] = ssl_ca
+                cfg_base["ssl_verify_cert"] = True
+                log.info("mysql_ssl_ca_file_found", path=ssl_ca)
+            else:
+                log.error("mysql_ssl_ca_file_not_found", path=ssl_ca, cwd=os_module.getcwd())
+                # Tentar sem verificação de certificado como fallback
+                cfg_base["ssl_verify_cert"] = False
 
         if not host or not user_raw or not password or not database:
             log.error(

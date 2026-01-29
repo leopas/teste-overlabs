@@ -22,6 +22,14 @@ from app.config import settings
 from app.retrieval import estimate_tokens, get_embeddings_provider
 from app.security import contains_cpf
 
+# Configurar logging para aparecer nos logs
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stderr
+)
 
 DOCS_ROOT = Path(os.getenv("DOCS_ROOT", "/docs"))
 
@@ -235,13 +243,30 @@ async def main() -> int:
     mtimes = [p.stat().st_mtime for p in files]
     freshness_by_mtime = compute_freshness_scores(mtimes)
 
+    logger = logging.getLogger(__name__)
+    
+    # Log da chave OpenAI ANTES de criar o embedder
+    print(f"[ingest] Verificando configuração OpenAI...", file=sys.stderr)
+    print(f"[ingest] USE_OPENAI_EMBEDDINGS={settings.use_openai_embeddings}", file=sys.stderr)
+    if settings.openai_api_key:
+        key_preview = settings.openai_api_key[:10] if len(settings.openai_api_key) >= 10 else settings.openai_api_key
+        key_length = len(settings.openai_api_key)
+        print(f"[ingest] OPENAI_API_KEY: preview='{key_preview}...', tamanho={key_length} caracteres", file=sys.stderr)
+        logger.info(f"OpenAI API Key no settings: preview='{key_preview}...', tamanho={key_length} caracteres")
+    else:
+        print(f"[ingest] OPENAI_API_KEY esta vazia ou None!", file=sys.stderr)
+        logger.warning("OpenAI API Key esta vazia ou None no settings!")
+    
     embedder = get_embeddings_provider()
+    print(f"[ingest] Embedder criado: {type(embedder).__name__}", file=sys.stderr)
+    
     qdrant = QdrantClient(url=settings.qdrant_url, timeout=10.0)
 
     indexed = 0
     ignored = []
 
     # Preparar coleção (descobrir dim via embedding de teste)
+    print("[ingest] Testando embedding (isso vai mostrar logs da chave OpenAI)...", file=sys.stderr)
     test_vec = (await embedder.embed(["dim probe"]))[0]
     dim = len(test_vec)
     collection_name = settings.qdrant_collection

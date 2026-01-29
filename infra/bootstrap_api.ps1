@@ -307,29 +307,229 @@ $envVarsYaml
     }
 } else {
     Write-Host "[OK] API Container App já existe" -ForegroundColor Green
+}
+
+# ==========================================
+# CONFIGURAÇÕES PÓS-CRIAÇÃO/VERIFICAÇÃO
+# ==========================================
+
+Write-Host ""
+Write-Host "=== Configurando Acessos e Permissões ===" -ForegroundColor Cyan
+Write-Host ""
+
+# 1. Verificar/criar Managed Identity
+Write-Host "[1/5] Verificando Managed Identity..." -ForegroundColor Yellow
+$identity = az containerapp show --name $ApiApp --resource-group $ResourceGroup --query "identity" -o json | ConvertFrom-Json
+
+if (-not $identity -or -not $identity.type -or $identity.type -ne "SystemAssigned") {
+    Write-Host "  [INFO] Habilitando Managed Identity..." -ForegroundColor Cyan
+    az containerapp identity assign `
+        --name $ApiApp `
+        --resource-group $ResourceGroup `
+        --system-assigned | Out-Null
     
-    # Verificar se o volume está configurado
-    Write-Host "[INFO] Verificando se volume de documentos está configurado..." -ForegroundColor Yellow
-    $ErrorActionPreference = "Continue"
-    $currentVolumes = az containerapp show --name $ApiApp --resource-group $ResourceGroup --query "properties.template.volumes" -o json 2>$null | ConvertFrom-Json
-    $ErrorActionPreference = "Stop"
-    
-    $hasVolume = $false
-    if ($currentVolumes) {
-        foreach ($vol in $currentVolumes) {
-            if ($vol.name -eq "docs") {
-                $hasVolume = $true
-                break
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [OK] Managed Identity habilitada" -ForegroundColor Green
+        Start-Sleep -Seconds 5
+        $identity = az containerapp show --name $ApiApp --resource-group $ResourceGroup --query "identity" -o json | ConvertFrom-Json
+    } else {
+        Write-Host "  [ERRO] Falha ao habilitar Managed Identity" -ForegroundColor Red
+        $identity = $null
+    }
+} else {
+    Write-Host "  [OK] Managed Identity já está habilitada" -ForegroundColor Green
+}
+
+$principalId = $identity.principalId
+if ($principalId) {
+    Write-Host "  Principal ID: $principalId" -ForegroundColor Gray
+}
+Write-Host ""
+
+# 2. Verificar/criar secrets no Key Vault
+Write-Host "[2/5] Verificando secrets no Key Vault..." -ForegroundColor Yellow
+if ($secrets.Count -gt 0) {
+    foreach ($key in $secrets.Keys) {
+        $kvName = $key.ToLower().Replace('_', '-')
+        $value = $secrets[$key]
+        
+        $ErrorActionPreference = "Continue"
+        $secretExists = az keyvault secret show --vault-name $KeyVault --name $kvName --query "name" -o tsv 2>$null
+        $ErrorActionPreference = "Stop"
+        
+        if ($secretExists) {
+            Write-Host "  [OK] Secret '$kvName' já existe" -ForegroundColor Green
+        } else {
+            Write-Host "  [INFO] Criando secret '$kvName'..." -ForegroundColor Cyan
+            $tempFile = [System.IO.Path]::GetTempFileName()
+            $value | Out-File -FilePath $tempFile -Encoding utf8 -NoNewline
+            $ErrorActionPreference = "Continue"
+            az keyvault secret set --vault-name $KeyVault --name $kvName --file $tempFile 2>&1 | Out-Null
+            Remove-Item $tempFile -Force
+            $ErrorActionPreference = "Stop"
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Secret '$kvName' criado" -ForegroundColor Green
+            } else {
+                Write-Host "  [ERRO] Falha ao criar secret '$kvName'" -ForegroundColor Red
             }
         }
     }
+} else {
+    Write-Host "  [AVISO] Nenhum secret encontrado no .env" -ForegroundColor Yellow
+}
+Write-Host ""
+
+# 3. Verificar/criar permissões RBAC no Key Vault
+Write-Host "[3/5] Verificando permissões RBAC no Key Vault..." -ForegroundColor Yellow
+if ($principalId) {
+    $ErrorActionPreference = "Continue"
+    $kvRbacEnabled = az keyvault show --name $KeyVault --resource-group $ResourceGroup --query "properties.enableRbacAuthorization" -o tsv 2>$null
+    $ErrorActionPreference = "Stop"
     
-    if (-not $hasVolume) {
-        Write-Host "[AVISO] Volume de documentos não está configurado!" -ForegroundColor Yellow
-        Write-Host "[INFO] Execute: .\infra\fix_volume_export_and_update.ps1 para adicionar o volume" -ForegroundColor Cyan
+    if ($kvRbacEnabled -eq $true) {
+        $subscriptionId = az account show --query id -o tsv
+        $kvResourceId = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.KeyVault/vaults/$KeyVault"
+        $requiredRole = "Key Vault Secrets User"
+        
+        $ErrorActionPreference = "Continue"
+        $rbacRoles = az role assignment list --scope $kvResourceId --assignee $principalId --query "[].roleDefinitionName" -o tsv 2>$null
+        $ErrorActionPreference = "Stop"
+        
+        $hasSecretsUser = $rbacRoles | Where-Object { $_ -like "*Key Vault Secrets User*" -or $_ -like "*Secrets User*" }
+        
+        if (-not $hasSecretsUser) {
+            Write-Host "  [INFO] Concedendo permissão '$requiredRole'..." -ForegroundColor Cyan
+            $ErrorActionPreference = "Continue"
+            az role assignment create `
+                --assignee-object-id $principalId `
+                --assignee-principal-type ServicePrincipal `
+                --role $requiredRole `
+                --scope $kvResourceId 2>&1 | Out-Null
+            $ErrorActionPreference = "Stop"
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Permissão '$requiredRole' concedida" -ForegroundColor Green
+            } else {
+                Write-Host "  [AVISO] Pode já ter permissão ou erro ao conceder" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  [OK] Permissão '$requiredRole' já existe" -ForegroundColor Green
+        }
     } else {
-        Write-Host "[OK] Volume de documentos já está configurado" -ForegroundColor Green
+        Write-Host "  [AVISO] Key Vault não usa RBAC (usa Access Policies)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  [AVISO] Não é possível verificar permissões (Managed Identity não habilitada)" -ForegroundColor Yellow
+}
+Write-Host ""
+
+# 4. Verificar/criar permissões no Storage Account
+Write-Host "[4/5] Verificando permissões no Storage Account..." -ForegroundColor Yellow
+if ($principalId) {
+    # Obter Storage Account do volume
+    $ErrorActionPreference = "Continue"
+    $volumeInfo = az containerapp env storage show `
+        --name $Environment `
+        --resource-group $ResourceGroup `
+        --storage-name documents-storage `
+        --query "{accountName:properties.azureFile.accountName}" `
+        -o json 2>$null
+    $ErrorActionPreference = "Stop"
+    
+    if ($volumeInfo) {
+        $volumeObj = $volumeInfo | ConvertFrom-Json
+        $storageAccount = $volumeObj.accountName
+        
+        $storageAccountId = az storage account show --name $storageAccount --resource-group $ResourceGroup --query id -o tsv
+        $requiredRole = "Storage File Data SMB Share Contributor"
+        
+        $ErrorActionPreference = "Continue"
+        $roleAssignments = az role assignment list `
+            --assignee $principalId `
+            --scope $storageAccountId `
+            --query "[?roleDefinitionName=='$requiredRole']" -o json 2>$null
+        $ErrorActionPreference = "Stop"
+        
+        if (-not $roleAssignments -or ($roleAssignments | ConvertFrom-Json).Count -eq 0) {
+            Write-Host "  [INFO] Concedendo permissão '$requiredRole'..." -ForegroundColor Cyan
+            $ErrorActionPreference = "Continue"
+            az role assignment create `
+                --assignee $principalId `
+                --role $requiredRole `
+                --scope $storageAccountId 2>&1 | Out-Null
+            $ErrorActionPreference = "Stop"
+            
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  [OK] Permissão '$requiredRole' concedida" -ForegroundColor Green
+                Start-Sleep -Seconds 5
+            } else {
+                Write-Host "  [AVISO] Pode já ter permissão ou erro ao conceder" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  [OK] Permissão '$requiredRole' já existe" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  [AVISO] Volume 'documents-storage' não encontrado no Environment" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  [AVISO] Não é possível verificar permissões (Managed Identity não habilitada)" -ForegroundColor Yellow
+}
+Write-Host ""
+
+# 5. Verificar/montar volume no Container App
+Write-Host "[5/5] Verificando volume de documentos no Container App..." -ForegroundColor Yellow
+$ErrorActionPreference = "Continue"
+$currentVolumes = az containerapp show --name $ApiApp --resource-group $ResourceGroup --query "properties.template.volumes" -o json 2>$null | ConvertFrom-Json
+$currentContainer = az containerapp show --name $ApiApp --resource-group $ResourceGroup --query "properties.template.containers[0]" -o json 2>$null | ConvertFrom-Json
+$ErrorActionPreference = "Stop"
+
+$hasVolume = $false
+$hasVolumeMount = $false
+
+if ($currentVolumes) {
+    foreach ($vol in $currentVolumes) {
+        if ($vol.name -eq "docs" -or $vol.name -eq "documents-storage") {
+            $hasVolume = $true
+            break
+        }
     }
 }
 
+if ($currentContainer.volumeMounts) {
+    foreach ($vm in $currentContainer.volumeMounts) {
+        if ($vm.volumeName -eq "docs" -or $vm.volumeName -eq "documents-storage") {
+            $hasVolumeMount = $true
+            break
+        }
+    }
+}
+
+if (-not $hasVolume -or -not $hasVolumeMount) {
+    Write-Host "  [AVISO] Volume de documentos não está completamente configurado!" -ForegroundColor Yellow
+    
+    # Verificar se o volume existe no Environment
+    $ErrorActionPreference = "Continue"
+    $envVolume = az containerapp env storage show `
+        --name $Environment `
+        --resource-group $ResourceGroup `
+        --storage-name documents-storage `
+        --query "name" -o tsv 2>$null
+    $ErrorActionPreference = "Stop"
+    
+    if ($envVolume) {
+        Write-Host "  [INFO] Volume existe no Environment, mas não está montado no Container App" -ForegroundColor Cyan
+        Write-Host "  [INFO] Para configurar o volume mount, execute:" -ForegroundColor Cyan
+        Write-Host "    .\infra\old\mount_docs_volume.ps1" -ForegroundColor Gray
+        Write-Host "  [INFO] Ou re-execute o bootstrap completo que já inclui essa configuração" -ForegroundColor Cyan
+    } else {
+        Write-Host "  [ERRO] Volume 'documents-storage' não existe no Environment!" -ForegroundColor Red
+        Write-Host "  [INFO] Execute: .\infra\bootstrap_container_apps.ps1 para criar o volume" -ForegroundColor Cyan
+    }
+} else {
+    Write-Host "  [OK] Volume de documentos já está configurado" -ForegroundColor Green
+}
+Write-Host ""
+
+Write-Host "=== Bootstrap API Concluído ===" -ForegroundColor Green
 Write-Host ""

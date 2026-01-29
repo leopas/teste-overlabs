@@ -62,8 +62,27 @@ class OpenAIEmbeddings(EmbeddingsProvider):
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
         self._client = httpx.AsyncClient(timeout=15.0)
+        # Log da chave para debug (apenas primeiros 10 caracteres e tamanho)
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+        key_preview = api_key[:10] if api_key and len(api_key) >= 10 else (api_key or "None")
+        key_length = len(api_key) if api_key else 0
+        log_msg = f"[OpenAIEmbeddings.__init__] API Key: preview='{key_preview}...', tamanho={key_length} caracteres"
+        print(log_msg, file=sys.stderr)
+        logger.info(log_msg)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        # Log da chave antes de cada chamada (apenas primeiros 10 caracteres e tamanho)
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+        key_preview = self._api_key[:10] if self._api_key and len(self._api_key) >= 10 else (self._api_key or "None")
+        key_length = len(self._api_key) if self._api_key else 0
+        log_msg = f"[OpenAIEmbeddings.embed] API Key antes da chamada: preview='{key_preview}...', tamanho={key_length} caracteres"
+        print(log_msg, file=sys.stderr)
+        logger.info(log_msg)
+        
         headers = {"Authorization": f"Bearer {self._api_key}"}
         payload = {"model": settings.openai_embeddings_model, "input": texts}
         r = await self._client.post("https://api.openai.com/v1/embeddings", json=payload, headers=headers)
