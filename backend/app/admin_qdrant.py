@@ -33,7 +33,7 @@ def _b64_decode_json(token: str) -> Any:
 
 def _qdrant() -> QdrantClient:
     # timeout maior para operações admin
-    return QdrantClient(url=settings.qdrant_url, timeout=10.0)
+    return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=10.0)
 
 
 @router.get("/collections")

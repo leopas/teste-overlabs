@@ -311,7 +311,7 @@ async def main() -> int:
     logger.info(f"✓ Embedder inicializado: {type(embedder).__name__}")
     
     logger.info("Conectando ao Qdrant...")
-    qdrant = QdrantClient(url=settings.qdrant_url, timeout=30.0)
+    qdrant = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=30.0)
     logger.info("✓ Conectado ao Qdrant")
     
     # Truncar se solicitado

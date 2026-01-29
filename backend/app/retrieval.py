@@ -136,7 +136,11 @@ class QdrantStore:
                     logging.getLogger(__name__).warning(warn)
             except Exception:
                 pass
-        self._client = QdrantClient(url=settings.qdrant_url, timeout=2.0)
+        self._client = QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+            timeout=5.0,
+        )
 
     def ready(self) -> bool:
         global _QDRANT_READY_LAST_LOG_AT

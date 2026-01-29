@@ -262,7 +262,7 @@ async def main() -> int:
     
     # Log do Qdrant URL (não é segredo; essencial para debug de rede no ACA)
     print(f"[ingest] QDRANT_URL={settings.qdrant_url}", file=sys.stderr)
-    qdrant = QdrantClient(url=settings.qdrant_url, timeout=10.0)
+    qdrant = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=30.0)
 
     indexed = 0
     ignored = []

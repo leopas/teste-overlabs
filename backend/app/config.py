@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
     qdrant_url: str = "http://qdrant:6333"
+    # Para Qdrant SaaS/Cloud (ou instâncias com auth), configure via secret:
+    # - Key Vault -> secretRef -> env var QDRANT_API_KEY
+    qdrant_api_key: str | None = None
     qdrant_collection: str = "docs_chunks"
     redis_url: str = "redis://redis:6379/0"
     docs_root: str = "/docs"
