@@ -175,6 +175,16 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
           keyVaultUrl: '${keyVaultUri}secrets/audit-enc-key-b64'
           identity: 'system'
         }
+        {
+          name: 'admin-username'
+          keyVaultUrl: '${keyVaultUri}secrets/admin-username'
+          identity: 'system'
+        }
+        {
+          name: 'admin-password'
+          keyVaultUrl: '${keyVaultUri}secrets/admin-password'
+          identity: 'system'
+        }
       ] : []
     }
     template: {
@@ -256,6 +266,14 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'AUDIT_ENC_KEY_B64'
               secretRef: 'audit-enc-key-b64'
+            }
+            {
+              name: 'ADMIN_USERNAME'
+              secretRef: 'admin-username'
+            }
+            {
+              name: 'ADMIN_PASSWORD'
+              secretRef: 'admin-password'
             }
           ] : [
             // Fallback: se Key Vault não foi fornecido, usar valores diretos (NÃO RECOMENDADO)

@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     prompt_firewall_reload_check_seconds: int = 2
     firewall_log_sample_rate: float = 0.01
 
+    # Admin UI/API (Qdrant admin + ingest trigger)
+    # IMPORTANTE: como será exposto publicamente, configure via secrets (Key Vault -> secretRef).
+    admin_username: str | None = None
+    admin_password: str | None = None
+
 
 settings = Settings()
 

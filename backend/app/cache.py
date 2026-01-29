@@ -49,3 +49,9 @@ class RedisClient:
         count, _ = pipe.execute()
         return int(count) <= int(limit_per_minute)
 
+    def raw(self) -> redis.Redis:
+        """
+        Acesso ao client raw para casos avançados (admin/jobs).
+        """
+        return self._client
+

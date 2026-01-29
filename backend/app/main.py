@@ -7,8 +7,8 @@ import uuid
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from .abuse_classifier import classify, flags_to_json, should_save_raw
 from .audit_store import (
@@ -46,6 +46,9 @@ from .retrieval import EmbeddingsProvider, QdrantStore, excerpt, excerpt_for_que
 from .schemas import AskRequest, AskResponse, RefusalReason, SourceItem
 from .security import detect_prompt_injection, detect_prompt_injection_details, detect_sensitive_request, normalize_question
 from .trace_store import PipelineTrace, get_trace_sink, hash_chunk
+from .admin_auth import require_admin
+from .admin_jobs import router as admin_jobs_router
+from .admin_qdrant import router as admin_qdrant_router
 
 
 log = structlog.get_logger()
@@ -110,6 +113,188 @@ def create_app(test_overrides: dict[str, Any] | None = None) -> FastAPI:
     app.state.trace_sink = overrides.get("trace_sink") or get_trace_sink()
     app.state.audit_sink = overrides.get("audit_sink") or get_audit_sink()
     app.state.prompt_firewall = overrides.get("prompt_firewall") or build_prompt_firewall(settings)
+
+    # Admin (Qdrant + ingest)
+    app.include_router(admin_jobs_router)
+    app.include_router(admin_qdrant_router)
+
+    @app.get("/admin", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+    async def admin_page() -> HTMLResponse:
+        html = """
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Admin Qdrant</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin: 12px 0; }
+    button { padding: 8px 12px; border-radius: 8px; border: 1px solid #999; background: #f6f6f6; cursor: pointer; }
+    button.primary { background: #111; color: #fff; border-color: #111; }
+    input, select { padding: 8px; border-radius: 8px; border: 1px solid #bbb; }
+    pre { background: #0b1020; color: #d7e2ff; padding: 12px; border-radius: 10px; overflow: auto; max-height: 300px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; vertical-align: top; }
+    .muted { color: #666; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <h2>Admin do Qdrant</h2>
+  <p class="muted">Painel simples para inspecionar collections/chunks e disparar ingestão (upsert).</p>
+
+  <div class="card">
+    <div class="row">
+      <button id="btnRefresh" class="primary">Atualizar collections</button>
+      <label>Collection:
+        <select id="selCollection"></select>
+      </label>
+      <label>Limit:
+        <input id="inpLimit" type="number" min="1" max="200" value="50" style="width: 90px"/>
+      </label>
+      <button id="btnLoad">Carregar chunks</button>
+      <button id="btnNext">Próxima página</button>
+      <span id="lblCursor" class="muted mono"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="btnIngest" class="primary">Ingerir agora (scan_docs + ingest)</button>
+      <span id="lblJob" class="muted mono"></span>
+    </div>
+    <pre id="jobLog"></pre>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 220px">id</th>
+          <th>payload</th>
+          <th style="width: 420px">text_preview</th>
+        </tr>
+      </thead>
+      <tbody id="tblBody"></tbody>
+    </table>
+  </div>
+
+<script>
+let nextCursor = null;
+let activeJob = null;
+
+function el(id){ return document.getElementById(id); }
+
+async function apiGet(path){
+  const r = await fetch(path, { credentials: "same-origin" });
+  if(!r.ok){ throw new Error(await r.text()); }
+  return await r.json();
+}
+async function apiPost(path){
+  const r = await fetch(path, { method: "POST", credentials: "same-origin" });
+  const txt = await r.text();
+  if(!r.ok){ throw new Error(txt); }
+  return txt ? JSON.parse(txt) : {};
+}
+
+function renderCollections(cols){
+  const sel = el("selCollection");
+  sel.innerHTML = "";
+  cols.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.name;
+    opt.textContent = c.points_count != null ? `${c.name} (${c.points_count})` : c.name;
+    sel.appendChild(opt);
+  });
+}
+
+function renderPoints(items){
+  const tb = el("tblBody");
+  tb.innerHTML = "";
+  items.forEach(it => {
+    const tr = document.createElement("tr");
+    const tdId = document.createElement("td");
+    tdId.className = "mono";
+    tdId.textContent = String(it.id);
+    const tdPayload = document.createElement("td");
+    tdPayload.className = "mono";
+    tdPayload.textContent = it.payload ? JSON.stringify(it.payload) : "";
+    const tdText = document.createElement("td");
+    tdText.textContent = it.text_preview || "";
+    tr.appendChild(tdId);
+    tr.appendChild(tdPayload);
+    tr.appendChild(tdText);
+    tb.appendChild(tr);
+  });
+}
+
+async function refreshCollections(){
+  const data = await apiGet("/admin/api/qdrant/collections");
+  renderCollections(data.collections || []);
+}
+
+async function loadPoints(cursor){
+  const col = el("selCollection").value;
+  const limit = Number(el("inpLimit").value || 50);
+  const qs = new URLSearchParams({ collection: col, limit: String(limit) });
+  if(cursor){ qs.set("cursor", cursor); }
+  const data = await apiGet("/admin/api/qdrant/points?" + qs.toString());
+  renderPoints(data.items || []);
+  nextCursor = data.next_cursor || null;
+  el("lblCursor").textContent = nextCursor ? ("cursor=" + nextCursor.slice(0,24) + "…") : "fim";
+}
+
+async function pollJob(){
+  if(!activeJob) return;
+  try{
+    const data = await apiGet(`/admin/api/jobs/${activeJob}?tail=200`);
+    el("lblJob").textContent = `job=${activeJob} status=${data.job.status} step=${data.job.step}`;
+    el("jobLog").textContent = (data.logs || []).join("\\n");
+    if(data.job.status === "succeeded" || data.job.status === "failed"){
+      return;
+    }
+  }catch(e){
+    el("jobLog").textContent = String(e);
+  }
+  setTimeout(pollJob, 2000);
+}
+
+el("btnRefresh").addEventListener("click", async () => {
+  try{ await refreshCollections(); }catch(e){ alert(e); }
+});
+el("btnLoad").addEventListener("click", async () => {
+  try{ await loadPoints(null); }catch(e){ alert(e); }
+});
+el("btnNext").addEventListener("click", async () => {
+  try{
+    if(!nextCursor){ alert("Sem próxima página"); return; }
+    await loadPoints(nextCursor);
+  }catch(e){ alert(e); }
+});
+el("btnIngest").addEventListener("click", async () => {
+  try{
+    const data = await apiPost("/admin/api/ingest");
+    activeJob = data.job_id;
+    el("lblJob").textContent = "job=" + activeJob;
+    el("jobLog").textContent = "";
+    pollJob();
+  }catch(e){
+    alert(e);
+  }
+});
+
+// init
+refreshCollections().catch(() => {});
+</script>
+</body>
+</html>
+"""
+        resp = HTMLResponse(content=html)
+        # evitar caching do painel (principalmente por ser admin)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

@@ -79,13 +79,35 @@ if ($VerifyDocs -or $true) {
 Write-Host "[INFO] Verificando configuração..." -ForegroundColor Yellow
 $ErrorActionPreference = "Continue"
 
+# Carregar env vars do template (inclui value OU secretRef)
+$envList = $null
+try {
+    $envListJson = az containerapp show `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --query "properties.template.containers[0].env" -o json 2>$null
+    if ($envListJson) {
+        $envList = $envListJson | ConvertFrom-Json
+    }
+} catch {
+    $envList = $null
+}
+
 # Verificar QDRANT_URL (usar variável de ambiente do container)
 Write-Host "[INFO] Verificando QDRANT_URL..." -ForegroundColor Cyan
 # Verificar via az containerapp show (mais confiável que exec)
-$envVars = az containerapp show `
-    --name $ApiAppName `
-    --resource-group $ResourceGroup `
-    --query "properties.template.containers[0].env[?name=='QDRANT_URL'].value" -o tsv 2>&1
+$envVars = $null
+if ($envList) {
+    $qdrantEnv = $envList | Where-Object { $_.name -eq "QDRANT_URL" } | Select-Object -First 1
+    if ($qdrantEnv) { $envVars = $qdrantEnv.value }
+}
+if (-not $envVars) {
+    # Fallback (formato antigo do script)
+    $envVars = az containerapp show `
+        --name $ApiAppName `
+        --resource-group $ResourceGroup `
+        --query "properties.template.containers[0].env[?name=='QDRANT_URL'].value" -o tsv 2>$null
+}
 
 if ($envVars -and $envVars -ne "NOT_SET") {
     Write-Host "[OK] QDRANT_URL configurada: $envVars" -ForegroundColor Green
@@ -119,21 +141,73 @@ $useOpenAIEnv = az containerapp show `
 if ($useOpenAIEnv -eq "true" -or $useOpenAIEnv -eq "1" -or $useOpenAIEnv -eq "True") {
     Write-Host "[OK] USE_OPENAI_EMBEDDINGS está habilitado" -ForegroundColor Green
     
-    $openaiKeyRef = az containerapp show `
-        --name $ApiAppName `
-        --resource-group $ResourceGroup `
-        --query "properties.template.containers[0].env[?name=='OPENAI_API_KEY'].value" -o tsv 2>&1
-    
-    if ($openaiKeyRef -and $openaiKeyRef -match "KeyVault") {
-        Write-Host "[OK] OPENAI_API_KEY configurada (Key Vault reference)" -ForegroundColor Green
-        Write-Host "[AVISO] Se a ingestão falhar com 401, a referência pode não estar sendo resolvida." -ForegroundColor Yellow
-        Write-Host "[INFO] Nesse caso, use: .\infra\test_keyvault_resolution_workaround.ps1 para testar com chave direta" -ForegroundColor Gray
-    } elseif ($openaiKeyRef -and $openaiKeyRef -notmatch "KeyVault" -and $openaiKeyRef.Length -gt 10) {
+    # Em Azure Container Apps, secrets aparecem como env { name, secretRef } (e NÃO em .value)
+    $openaiEnv = $null
+    if ($envList) {
+        $openaiEnv = $envList | Where-Object { $_.name -eq "OPENAI_API_KEY" } | Select-Object -First 1
+    }
+
+    if ($openaiEnv -and $openaiEnv.secretRef) {
+        Write-Host "[OK] OPENAI_API_KEY configurada via secretRef: $($openaiEnv.secretRef)" -ForegroundColor Green
+
+        # Verificar se o secretRef existe em properties.configuration.secrets (sem expor valores)
+        try {
+            $secretsJson = az containerapp show `
+                --name $ApiAppName `
+                --resource-group $ResourceGroup `
+                --query "properties.configuration.secrets" -o json 2>$null
+            if ($secretsJson) {
+                $secrets = $secretsJson | ConvertFrom-Json
+                $ref = $openaiEnv.secretRef
+                $foundSecret = $secrets | Where-Object { $_.name -eq $ref } | Select-Object -First 1
+                if ($foundSecret) {
+                    if ($foundSecret.keyVaultUrl) {
+                        $id = $foundSecret.identity
+                        if (-not $id) { $id = "(não informado)" }
+                        Write-Host "  [OK] Secret '$ref' aponta para Key Vault: $($foundSecret.keyVaultUrl) (identity=$id)" -ForegroundColor Green
+                    } else {
+                        Write-Host "  [OK] Secret '$ref' existe no Container App (valor não exibido)" -ForegroundColor Green
+                    }
+                } else {
+                    Write-Host "  [AVISO] secretRef '$ref' não foi encontrado em properties.configuration.secrets" -ForegroundColor Yellow
+                    Write-Host "  [INFO] Isso costuma causar falha em runtime (env var fica vazia). Reaplique secrets/env do Container App." -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            Write-Host "  [AVISO] Não foi possível verificar a lista de secrets do Container App (sem expor valores)." -ForegroundColor Yellow
+        }
+    } elseif ($openaiEnv -and $openaiEnv.value -and $openaiEnv.value.Length -gt 10) {
         Write-Host "[OK] OPENAI_API_KEY configurada (valor direto)" -ForegroundColor Green
     } else {
         Write-Host "[AVISO] OPENAI_API_KEY não encontrada ou não configurada corretamente" -ForegroundColor Yellow
-        Write-Host "[INFO] Configure no Key Vault e referencie no Container App." -ForegroundColor Yellow
-        Write-Host "[INFO] Ou use: .\infra\test_keyvault_resolution_workaround.ps1 para configurar diretamente" -ForegroundColor Gray
+        Write-Host "[INFO] Em ACA, o esperado é env com secretRef (ex.: OPENAI_API_KEY -> secretRef: openai-api-key) e o secret definido em configuration.secrets." -ForegroundColor Yellow
+        Write-Host "[INFO] Se a ingestão falhar com 401, o problema tende a ser resolução do Key Vault (RBAC/identity) ou valor inválido/BOM." -ForegroundColor Gray
+    }
+
+    # Teste em runtime: conferir se a env var está realmente presente no container (sem expor o valor)
+    Write-Host ""
+    Write-Host "[INFO] Testando presença de OPENAI_API_KEY dentro do container (sem expor valor)..." -ForegroundColor Cyan
+    try {
+        # Evitar sh/base64/pipes/redirecionamento e também aspas duplas aninhadas no Windows.
+        # Usar aspas simples no lado do container (shell), e aspas duplas dentro do Python.
+        $checkCmd = "python -c 'import os,json; v=os.getenv(""OPENAI_API_KEY"",""""); has_bom=(len(v)>0 and ord(v[0])==65279); print(json.dumps({""present"": bool(v), ""length"": len(v), ""has_bom"": has_bom}))'"
+
+        $ErrorActionPreference = "Continue"
+        $checkOut = az containerapp exec `
+            --name $ApiAppName `
+            --resource-group $ResourceGroup `
+            --command $checkCmd 2>&1
+        $ErrorActionPreference = "Stop"
+
+        if ($LASTEXITCODE -eq 0 -and $checkOut) {
+            Write-Host "  Resultado: $checkOut" -ForegroundColor Gray
+        } else {
+            Write-Host "  [AVISO] Não foi possível executar o teste dentro do container (exit=$LASTEXITCODE)." -ForegroundColor Yellow
+            if ($checkOut) { Write-Host "  Saída: $checkOut" -ForegroundColor Gray }
+        }
+    } catch {
+        $ErrorActionPreference = "Stop"
+        Write-Host "  [AVISO] Falha ao testar OPENAI_API_KEY dentro do container: $_" -ForegroundColor Yellow
     }
 } else {
     Write-Host "[INFO] Usando embeddings locais (FastEmbed)" -ForegroundColor Yellow
@@ -312,18 +386,8 @@ $ErrorActionPreference = "Continue"
 # Aguardar um pouco antes de verificar (evitar rate limit)
 Start-Sleep -Seconds 15
 
-# Usar método simplificado: criar script temporário via echo + base64
-$checkPythonScript = @"
-from qdrant_client import QdrantClient
-import os
-qdrant = QdrantClient(url=os.getenv('QDRANT_URL'), timeout=30.0)
-info = qdrant.get_collection('docs_chunks')
-print(f'Pontos indexados: {info.points_count}')
-"@
-
-$checkBytes = [System.Text.Encoding]::UTF8.GetBytes($checkPythonScript)
-$checkBase64 = [Convert]::ToBase64String($checkBytes)
-$checkCmd = "sh -c `"echo '$checkBase64' | base64 -d > /tmp/check_points.py && python /tmp/check_points.py`""
+# Evitar sh/base64/pipes/redirecionamento no Windows: usar python -c direto
+$checkCmd = "python -c 'from qdrant_client import QdrantClient; import os; q=QdrantClient(url=os.getenv(""QDRANT_URL""), timeout=30.0); info=q.get_collection(""docs_chunks""); print(""Pontos indexados: "" + str(info.points_count))'"
 
 $checkOutput = az containerapp exec `
     --name $ApiAppName `

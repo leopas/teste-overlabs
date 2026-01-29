@@ -97,6 +97,11 @@ Get-Content $EnvFile | ForEach-Object {
             }
             
             $isSecret = -not $isInDenylist -and $hasSecretKeyword
+
+            # Admin UI/API: manter user/pass como secrets mesmo sem keyword (username não contém PASSWORD/TOKEN/etc).
+            if ($keyUpper -eq "ADMIN_USERNAME") {
+                $isSecret = $true
+            }
             
             if ($isSecret) {
                 $secrets[$key] = $value
@@ -416,7 +421,9 @@ if ($secrets.Count -gt 0) {
         } else {
             Write-Host "  [INFO] Criando secret '$kvName'..." -ForegroundColor Cyan
             $tempFile = [System.IO.Path]::GetTempFileName()
-            $value | Out-File -FilePath $tempFile -Encoding utf8 -NoNewline
+            # Escrever sem BOM para evitar prefixo \uFEFF no valor do secret (impacta OpenAI/admin auth).
+            $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+            [System.IO.File]::WriteAllText($tempFile, $value, $utf8NoBom)
             $ErrorActionPreference = "Continue"
             az keyvault secret set --vault-name $KeyVault --name $kvName --file $tempFile 2>&1 | Out-Null
             Remove-Item $tempFile -Force
