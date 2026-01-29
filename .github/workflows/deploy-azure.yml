@@ -59,11 +59,11 @@ jobs:
       - name: Validate Key Vault syntax
         shell: pwsh
         run: |
-          if [ -f infra/validate_keyvault_syntax.ps1 ]; then
-            pwsh -File infra/validate_keyvault_syntax.ps1
-          else
-            echo "⚠️  Script de validação não encontrado, pulando..."
-          fi
+          if (Test-Path "infra/validate_keyvault_syntax.ps1") {
+            pwsh -File "infra/validate_keyvault_syntax.ps1"
+          } else {
+            Write-Host "⚠️  Script de validação não encontrado, pulando..."
+          }
 
   build:
     name: Build and Push
