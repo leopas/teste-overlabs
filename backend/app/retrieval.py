@@ -111,10 +111,31 @@ def get_current_embedding_model_name() -> str:
 
 _QDRANT_READY_LAST_LOG_AT = 0.0
 _QDRANT_READY_LOG_INTERVAL_SECONDS = 30.0
+_QDRANT_URL_WARNED_ONCE = False
 
 
 class QdrantStore:
     def __init__(self) -> None:
+        global _QDRANT_URL_WARNED_ONCE
+        # Guardrail (informativo): em ACA com ingress HTTP, usar ":6333" quase sempre é errado.
+        # Mantém compatibilidade, mas ajuda a diagnosticar configuração incorreta.
+        if not _QDRANT_URL_WARNED_ONCE:
+            try:
+                url = settings.qdrant_url
+                parsed = urllib.parse.urlparse(url)
+                host = parsed.hostname or ""
+                port = parsed.port
+                if port == 6333 and ".internal." not in host:
+                    _QDRANT_URL_WARNED_ONCE = True
+                    warn = (
+                        "[qdrant_url_guardrail] "
+                        f"QDRANT_URL={url!r} parece usar :6333 sem FQDN internal. "
+                        "Em ACA com ingress HTTP, prefira https://<qdrant_ingress_fqdn> (sem :6333)."
+                    )
+                    print(warn, file=sys.stderr)
+                    logging.getLogger(__name__).warning(warn)
+            except Exception:
+                pass
         self._client = QdrantClient(url=settings.qdrant_url, timeout=2.0)
 
     def ready(self) -> bool:
