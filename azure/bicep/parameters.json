@@ -28,6 +28,9 @@
     },
     "redisVmSize": {
       "value": "c0"
+    },
+    "keyVaultName": {
+      "value": ""
     }
   }
 }

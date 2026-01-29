@@ -30,6 +30,12 @@ param redisSku string = 'Basic'
 @description('Tamanho do Redis')
 param redisVmSize string = 'c0'
 
+@description('Nome do Key Vault (deve existir previamente)')
+param keyVaultName string = ''
+
+// Variável para construir a URI do Key Vault
+var keyVaultUri = keyVaultName != '' ? 'https://${keyVaultName}.vault.azure.net/' : ''
+
 // Container Registry
 resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' = {
   name: '${projectName}acr'
@@ -149,13 +155,104 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
           identity: ''
         }
       ]
+      // Secrets do Key Vault (apenas se keyVaultName foi fornecido)
+      secrets: keyVaultName != '' ? [
+        {
+          name: 'mysql-password'
+          keyVaultUrl: '${keyVaultUri}secrets/mysql-password'
+        }
+        {
+          name: 'openai-api-key'
+          keyVaultUrl: '${keyVaultUri}secrets/openai-api-key'
+        }
+        {
+          name: 'audit-enc-key-b64'
+          keyVaultUrl: '${keyVaultUri}secrets/audit-enc-key-b64'
+        }
+      ] : []
     }
     template: {
       containers: [
         {
           image: '${acr.properties.loginServer}/rag-api:latest'
           name: 'api'
-          env: [
+          env: keyVaultName != '' ? [
+            // Variáveis não-secretas (valores diretos)
+            {
+              name: 'QDRANT_URL'
+              value: 'http://${qdrantApp.properties.configuration.ingress.fqdn}:6333'
+            }
+            {
+              name: 'REDIS_URL'
+              value: 'rediss://:${redis.listKeys().primaryKey}@${redis.properties.hostName}:${redis.properties.port}/0'
+            }
+            {
+              name: 'MYSQL_HOST'
+              value: mysqlServer.properties.fullyQualifiedDomainName
+            }
+            {
+              name: 'MYSQL_PORT'
+              value: '3306'
+            }
+            {
+              name: 'MYSQL_USER'
+              value: mysqlAdminUser
+            }
+            {
+              name: 'MYSQL_DATABASE'
+              value: 'rag_audit'
+            }
+            {
+              name: 'MYSQL_SSL_CA'
+              value: '/app/certs/DigiCertGlobalRootCA.crt.pem'
+            }
+            {
+              name: 'TRACE_SINK'
+              value: 'mysql'
+            }
+            {
+              name: 'AUDIT_LOG_ENABLED'
+              value: '1'
+            }
+            {
+              name: 'AUDIT_LOG_INCLUDE_TEXT'
+              value: '1'
+            }
+            {
+              name: 'AUDIT_LOG_RAW_MODE'
+              value: 'risk_only'
+            }
+            {
+              name: 'ABUSE_CLASSIFIER_ENABLED'
+              value: '1'
+            }
+            {
+              name: 'PROMPT_FIREWALL_ENABLED'
+              value: '0'
+            }
+            {
+              name: 'LOG_LEVEL'
+              value: 'INFO'
+            }
+            {
+              name: 'DOCS_ROOT'
+              value: '/app/DOC-IA'
+            }
+            // Secrets do Key Vault (usando secretRef)
+            {
+              name: 'MYSQL_PASSWORD'
+              secretRef: 'mysql-password'
+            }
+            {
+              name: 'OPENAI_API_KEY'
+              secretRef: 'openai-api-key'
+            }
+            {
+              name: 'AUDIT_ENC_KEY_B64'
+              secretRef: 'audit-enc-key-b64'
+            }
+          ] : [
+            // Fallback: se Key Vault não foi fornecido, usar valores diretos (NÃO RECOMENDADO)
             {
               name: 'QDRANT_URL'
               value: 'http://${qdrantApp.properties.configuration.ingress.fqdn}:6333'
@@ -185,6 +282,10 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
               value: 'rag_audit'
             }
             {
+              name: 'MYSQL_SSL_CA'
+              value: '/app/certs/DigiCertGlobalRootCA.crt.pem'
+            }
+            {
               name: 'TRACE_SINK'
               value: 'mysql'
             }
@@ -211,6 +312,10 @@ resource apiApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'LOG_LEVEL'
               value: 'INFO'
+            }
+            {
+              name: 'DOCS_ROOT'
+              value: '/app/DOC-IA'
             }
           ]
           resources: {
