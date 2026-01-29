@@ -1,5 +1,5 @@
 ﻿properties:
-  environmentId: /subscriptions/06cd0a82-44bf-42fe-ab19-2851e9301697/resourceGroups/rg-overlabs-prod/providers/Microsoft.App/managedEnvironments/env-overlabs-prod-248
+  environmentId: /subscriptions/06cd0a82-44bf-42fe-ab19-2851e9301697/resourceGroups/rg-overlabs-prod/providers/Microsoft.App/managedEnvironments/env-overlabs-prod-300
   configuration:
     ingress:
       external: true
@@ -18,13 +18,13 @@
       image: acrchoperia.azurecr.io/choperia-api:latest
       env:
       - name: QDRANT_URL
-        value: "http://app-overlabs-qdrant-prod-248:6333"
+        value: "http://app-overlabs-qdrant-prod-300:6333"
       - name: REDIS_URL
-        value: "redis://app-overlabs-redis-prod-248:6379/0"
+        value: "redis://app-overlabs-redis-prod-300:6379/0"
       - name: DOCS_ROOT
         value: "/app/DOC-IA"
       - name: OPENAI_API_KEY
-        value: "@Microsoft.KeyVault(SecretUri=https://kv-overlabs-prod-248.vault.azure.net/secrets/openai-api-key/)"
+        value: "@Microsoft.KeyVault(SecretUri=https://kv-overlabs-prod-300.vault.azure.net/secrets/openai-api-key/)"
       - name: USE_OPENAI_EMBEDDINGS
         value: "true"
       - name: LOG_LEVEL

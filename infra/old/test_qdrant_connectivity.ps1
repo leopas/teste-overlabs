@@ -2,8 +2,8 @@
 
 param(
     [string]$ResourceGroup = "rg-overlabs-prod",
-    [string]$ApiAppName = "app-overlabs-prod-248",
-    [string]$QdrantAppName = "app-overlabs-qdrant-prod-248"
+    [string]$ApiAppName = "app-overlabs-prod-300",
+    [string]$QdrantAppName = "app-overlabs-qdrant-prod-300"
 )
 
 Write-Host "=== Testar Conectividade com Qdrant ===" -ForegroundColor Cyan
@@ -34,7 +34,7 @@ import sys
 
 urls_to_test = [
     os.getenv('QDRANT_URL', ''),
-    'http://app-overlabs-qdrant-prod-248:6333',
+    'http://app-overlabs-qdrant-prod-300:6333',
     'http://$qdrantFqdn:6333'
 ]
 

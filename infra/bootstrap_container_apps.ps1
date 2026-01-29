@@ -55,7 +55,7 @@ if (Test-Path $stateFile) {
     try {
         $existingState = Get-Content $stateFile | ConvertFrom-Json
         if ($existingState.apiAppName) {
-            # Extrair sufixo do nome do Container App (formato: app-overlabs-prod-248)
+            # Extrair sufixo do nome do Container App (formato: app-overlabs-prod-300)
             if ($existingState.apiAppName -match "-(\d+)$") {
                 $suffix = [int]$matches[1]
                 Write-Host "[INFO] Reutilizando sufixo existente do deploy_state.json: $suffix" -ForegroundColor Cyan

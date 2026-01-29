@@ -1,7 +1,7 @@
 # Script simples para testar acesso a /app/DOC-IA
 
 $rg = "rg-overlabs-prod"
-$app = "app-overlabs-prod-248"
+$app = "app-overlabs-prod-300"
 
 Write-Host "=== Teste de Acesso a /app/DOC-IA ===" -ForegroundColor Cyan
 Write-Host ""

@@ -1,7 +1,7 @@
 # Script para corrigir volume mount usando o método recomendado pela Microsoft:
 # Exportar YAML completo → Editar → Reaplicar
 # 
-# Uso: .\infra\fix_volume_export_and_update.ps1 -ResourceGroup "rg-overlabs-prod" -ContainerApp "app-overlabs-prod-248"
+# Uso: .\infra\fix_volume_export_and_update.ps1 -ResourceGroup "rg-overlabs-prod" -ContainerApp "app-overlabs-prod-300"
 #
 # Este script implementa a solução "Microsoft-approved" para atualizar volume mounts:
 # 1. Atualiza CLI/extensão containerapp
@@ -12,7 +12,7 @@
 
 param(
     [string]$ResourceGroup = "rg-overlabs-prod",
-    [string]$ContainerApp = "app-overlabs-prod-248",
+    [string]$ContainerApp = "app-overlabs-prod-300",
     [string]$VolumeName = "docs",
     [string]$MountPath = "/app/DOC-IA",
     [string]$StorageName = "documents-storage",

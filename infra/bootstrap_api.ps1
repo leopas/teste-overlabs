@@ -1,5 +1,5 @@
 # Script para criar/verificar API Container App com volume de documentos
-# Uso: .\infra\bootstrap_api.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-248" -ApiApp "app-overlabs-prod-248" -AcrName "acrchoperia" -KeyVault "kv-overlabs-prod-248" -QdrantUrl "http://app-overlabs-qdrant-prod-248:6333" -RedisUrl "redis://app-overlabs-redis-prod-248:6379/0" -EnvFile ".env"
+# Uso: .\infra\bootstrap_api.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-300" -ApiApp "app-overlabs-prod-300" -AcrName "acrchoperia" -KeyVault "kv-overlabs-prod-300" -QdrantUrl "http://app-overlabs-qdrant-prod-300:6333" -RedisUrl "redis://app-overlabs-redis-prod-300:6379/0" -EnvFile ".env"
 #
 # O script carrega automaticamente secrets e non-secrets do arquivo .env
 
@@ -117,12 +117,13 @@ $envVars = @(
     "DOCS_ROOT=/app/DOC-IA"
 )
 
-foreach ($key in $NonSecrets.Keys) {
-    $envVars += "$key=$($NonSecrets[$key])"
+# Adicionar todas as non-secrets do .env
+foreach ($key in $nonSecrets.Keys) {
+    $envVars += "$key=$($nonSecrets[$key])"
 }
 
 # Adicionar Key Vault references para secrets
-foreach ($key in $Secrets.Keys) {
+foreach ($key in $secrets.Keys) {
     $kvName = $key.ToLower().Replace('_', '-')
     $envVars += "$key=@Microsoft.KeyVault(SecretUri=https://$KeyVault.vault.azure.net/secrets/$kvName/)"
 }

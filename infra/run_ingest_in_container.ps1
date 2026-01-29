@@ -91,7 +91,7 @@ if ($envVars -and $envVars -ne "NOT_SET") {
     Write-Host "[OK] QDRANT_URL configurada: $envVars" -ForegroundColor Green
     
     # Verificar se está usando FQDN interno completo (necessário quando external: false)
-    if ($envVars -notmatch "\.internal\." -and $envVars -match "app-overlabs-qdrant-prod-248:6333") {
+    if ($envVars -notmatch "\.internal\." -and $envVars -match "app-overlabs-qdrant-prod-300:6333") {
         Write-Host "[AVISO] QDRANT_URL está usando nome curto. Pode não resolver corretamente!" -ForegroundColor Yellow
         Write-Host "[INFO] Execute: .\infra\fix_qdrant_url.ps1 para corrigir para FQDN interno completo" -ForegroundColor Yellow
         Write-Host ""

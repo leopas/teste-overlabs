@@ -5,7 +5,7 @@ Script para executar ingestão localmente apontando para Qdrant de produção.
 Uso:
     python infra/ingest_local_to_prod_qdrant.py
     python infra/ingest_local_to_prod_qdrant.py --truncate-first
-    python infra/ingest_local_to_prod_qdrant.py --qdrant-url https://app-overlabs-qdrant-prod-248.azurecontainerapps.io
+    python infra/ingest_local_to_prod_qdrant.py --qdrant-url https://app-overlabs-qdrant-prod-300.azurecontainerapps.io
 """
 
 import argparse
@@ -227,7 +227,7 @@ def main() -> int:
     parser.add_argument(
         "--qdrant-url",
         type=str,
-        help="URL do Qdrant (ex: https://app-overlabs-qdrant-prod-248.azurecontainerapps.io). Se não fornecido, obtém de deploy_state.json",
+        help="URL do Qdrant (ex: https://app-overlabs-qdrant-prod-300.azurecontainerapps.io). Se não fornecido, obtém de deploy_state.json",
     )
     parser.add_argument(
         "--resource-group",
@@ -323,13 +323,13 @@ def main() -> int:
             print("Soluções:", file=sys.stderr)
             print("  1. Instale o Azure CLI: https://aka.ms/installazurecliwindows", file=sys.stderr)
             print("  2. Ou forneça a URL diretamente:", file=sys.stderr)
-            print("     --qdrant-url http://app-overlabs-qdrant-prod-248:6333", file=sys.stderr)
+            print("     --qdrant-url http://app-overlabs-qdrant-prod-300:6333", file=sys.stderr)
             return 1
         except Exception as e:
             print(f"[ERRO] Falha ao obter URL do Qdrant: {e}", file=sys.stderr)
             print("", file=sys.stderr)
             print("Forneça a URL diretamente:", file=sys.stderr)
-            print("  --qdrant-url http://app-overlabs-qdrant-prod-248:6333", file=sys.stderr)
+            print("  --qdrant-url http://app-overlabs-qdrant-prod-300:6333", file=sys.stderr)
             return 1
     
     print(f"[OK] Qdrant URL: {qdrant_url}")

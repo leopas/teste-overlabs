@@ -8,9 +8,9 @@ Estamos tentando montar um volume do Azure Files no Container App da API para qu
 
 - **Plataforma**: Azure Container Apps
 - **Resource Group**: `rg-overlabs-prod`
-- **Environment**: `env-overlabs-prod-248`
-- **Container App**: `app-overlabs-prod-248`
-- **Storage Account**: `saoverlabsprod248`
+- **Environment**: `env-overlabs-prod-300`
+- **Container App**: `app-overlabs-prod-300`
+- **Storage Account**: `saoverlabsprod300`
 - **File Share**: `documents` (no Storage Account)
 - **Volume no Environment**: `documents-storage` (configurado corretamente)
 - **Volume no Container App**: `docs` (adicionado manualmente pelo portal)
@@ -65,7 +65,7 @@ Estamos tentando montar um volume do Azure Files no Container App da API para qu
 ### Comando que retorna sucesso mas não aplica:
 ```powershell
 az containerapp update `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --yaml <arquivo.yaml>
 ```
@@ -73,7 +73,7 @@ az containerapp update `
 ### YAML usado (exemplo):
 ```yaml
 properties:
-  environmentId: /subscriptions/.../resourceGroups/.../providers/Microsoft.App/managedEnvironments/env-overlabs-prod-248
+  environmentId: /subscriptions/.../resourceGroups/.../providers/Microsoft.App/managedEnvironments/env-overlabs-prod-300
   template:
     containers:
     - name: api
@@ -100,10 +100,10 @@ properties:
 ### Verificação após update:
 ```powershell
 # Retorna null ou array vazio
-az containerapp show --name app-overlabs-prod-248 --resource-group rg-overlabs-prod --query "properties.template.containers[0].volumeMounts" -o json
+az containerapp show --name app-overlabs-prod-300 --resource-group rg-overlabs-prod --query "properties.template.containers[0].volumeMounts" -o json
 
 # Retorna o volume (mas sem mount)
-az containerapp show --name app-overlabs-prod-248 --resource-group rg-overlabs-prod --query "properties.template.volumes" -o json
+az containerapp show --name app-overlabs-prod-300 --resource-group rg-overlabs-prod --query "properties.template.volumes" -o json
 # Resultado: [{"name": "docs", "storageType": "AzureFile", "storageName": "documents-storage"}]
 ```
 
@@ -196,13 +196,13 @@ A diferença chave:
 
 ```powershell
 # 1. Verificar volume no Environment (funciona)
-az containerapp env storage show --name env-overlabs-prod-248 --resource-group rg-overlabs-prod --storage-name documents-storage
+az containerapp env storage show --name env-overlabs-prod-300 --resource-group rg-overlabs-prod --storage-name documents-storage
 
 # 2. Verificar volume no Container App (existe)
-az containerapp show --name app-overlabs-prod-248 --resource-group rg-overlabs-prod --query "properties.template.volumes" -o json
+az containerapp show --name app-overlabs-prod-300 --resource-group rg-overlabs-prod --query "properties.template.volumes" -o json
 
 # 3. Verificar volume mount (NÃO existe - retorna null)
-az containerapp show --name app-overlabs-prod-248 --resource-group rg-overlabs-prod --query "properties.template.containers[0].volumeMounts" -o json
+az containerapp show --name app-overlabs-prod-300 --resource-group rg-overlabs-prod --query "properties.template.containers[0].volumeMounts" -o json
 
 # 4. Tentar adicionar volume mount via YAML (retorna sucesso mas não aplica)
 # (usar qualquer um dos scripts mencionados acima)

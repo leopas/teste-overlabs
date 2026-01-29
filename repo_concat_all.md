@@ -3470,7 +3470,7 @@ Mapeamento de declarações testáveis da documentação para evidências no có
 245:     
 246:     if not self._rules:
 247:         return False, {}
-248:
+300:
 249:     normalized = normalize_for_firewall(text)
 250:     for r in self._rules:
 251:         if r.compiled.search(normalized):
@@ -6539,18 +6539,18 @@ app = create_app()
 {
     "acrName":  "acrchoperia",
     "fileShareName":  "qdrant-storage",
-    "apiAppName":  "app-overlabs-prod-248",
+    "apiAppName":  "app-overlabs-prod-300",
     "resourceGroup":  "rg-overlabs-prod",
     "location":  "brazilsouth",
-    "keyVaultName":  "kv-overlabs-prod-248",
-    "redisAppName":  "app-overlabs-redis-prod-248",
-    "storageAccountName":  "saoverlabsprod248",
+    "keyVaultName":  "kv-overlabs-prod-300",
+    "redisAppName":  "app-overlabs-redis-prod-300",
+    "storageAccountName":  "saoverlabsprod300",
     "tenantId":  "40cc8a97-43ed-42e1-9adb-703e0d5ee191",
-    "environmentName":  "env-overlabs-prod-248",
+    "environmentName":  "env-overlabs-prod-300",
     "subscriptionId":  "06cd0a82-44bf-42fe-ab19-2851e9301697",
     "createdAt":  "2026-01-27T23:05:13.2412027-03:00",
     "updatedAt":  "2026-01-27T23:05:13.2432070-03:00",
-    "qdrantAppName":  "app-overlabs-qdrant-prod-248"
+    "qdrantAppName":  "app-overlabs-qdrant-prod-300"
 }
 
 ```
@@ -19932,7 +19932,7 @@ if (Test-Path $stateFile) {
     try {
         $existingState = Get-Content $stateFile | ConvertFrom-Json
         if ($existingState.apiAppName) {
-            # Extrair sufixo do nome do Container App (formato: app-overlabs-prod-248)
+            # Extrair sufixo do nome do Container App (formato: app-overlabs-prod-300)
             if ($existingState.apiAppName -match "-(\d+)$") {
                 $suffix = [int]$matches[1]
                 Write-Host "[INFO] Reutilizando sufixo existente do deploy_state.json: $suffix" -ForegroundColor Cyan

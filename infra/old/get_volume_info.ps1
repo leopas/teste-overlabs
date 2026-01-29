@@ -1,7 +1,7 @@
 # Script para obter informações do volume e salvar em arquivo
 
 $rg = "rg-overlabs-prod"
-$app = "app-overlabs-prod-248"
+$app = "app-overlabs-prod-300"
 $outputFile = "volume_info_$(Get-Date -Format 'yyyyMMddHHmmss').json"
 
 $info = @{

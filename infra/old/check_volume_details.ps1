@@ -2,7 +2,7 @@
 
 param(
     [string]$ResourceGroup = "rg-overlabs-prod",
-    [string]$ApiAppName = "app-overlabs-prod-248"
+    [string]$ApiAppName = "app-overlabs-prod-300"
 )
 
 $ErrorActionPreference = "Continue"

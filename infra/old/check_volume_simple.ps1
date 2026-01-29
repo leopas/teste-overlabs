@@ -1,7 +1,7 @@
 # Script simples para verificar volume mount
 
 $rg = "rg-overlabs-prod"
-$app = "app-overlabs-prod-248"
+$app = "app-overlabs-prod-300"
 
 Write-Host "=== VERIFICAÇÃO DE VOLUME MOUNT ===" -ForegroundColor Cyan
 Write-Host ""

@@ -1,7 +1,7 @@
 # Script simples para testar resolução do Key Vault
 
 $rg = "rg-overlabs-prod"
-$app = "app-overlabs-prod-248"
+$app = "app-overlabs-prod-300"
 
 Write-Host "=== Teste de Resolucao do Key Vault ===" -ForegroundColor Cyan
 Write-Host ""

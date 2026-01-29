@@ -1,5 +1,5 @@
 # Script para criar/verificar Redis Container App
-# Uso: .\infra\bootstrap_redis.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-248" -RedisApp "app-overlabs-redis-prod-248"
+# Uso: .\infra\bootstrap_redis.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-300" -RedisApp "app-overlabs-redis-prod-300"
 
 param(
     [Parameter(Mandatory=$true)]

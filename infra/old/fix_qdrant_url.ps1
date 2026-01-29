@@ -2,8 +2,8 @@
 
 param(
     [string]$ResourceGroup = "rg-overlabs-prod",
-    [string]$ApiAppName = "app-overlabs-prod-248",
-    [string]$QdrantAppName = "app-overlabs-qdrant-prod-248"
+    [string]$ApiAppName = "app-overlabs-prod-300",
+    [string]$QdrantAppName = "app-overlabs-qdrant-prod-300"
 )
 
 Write-Host "=== Corrigir URL do Qdrant ===" -ForegroundColor Cyan
@@ -71,8 +71,8 @@ if ($LASTEXITCODE -eq 0) {
         
         # Ler YAML e substituir QDRANT_URL
         $yamlContent = Get-Content $tempYaml -Raw
-        $yamlContent = $yamlContent -replace "value:\s*http://app-overlabs-qdrant-prod-248:6333", "value: $newUrl"
-        $yamlContent = $yamlContent -replace "value:\s*http://app-overlabs-qdrant-prod-248\.internal[^\s]*:6333", "value: $newUrl"
+        $yamlContent = $yamlContent -replace "value:\s*http://app-overlabs-qdrant-prod-300:6333", "value: $newUrl"
+        $yamlContent = $yamlContent -replace "value:\s*http://app-overlabs-qdrant-prod-300\.internal[^\s]*:6333", "value: $newUrl"
         
         # Salvar YAML modificado
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false

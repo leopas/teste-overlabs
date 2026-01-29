@@ -302,7 +302,7 @@ Mapeamento de declarações testáveis da documentação para evidências no có
 245:     
 246:     if not self._rules:
 247:         return False, {}
-248:
+300:
 249:     normalized = normalize_for_firewall(text)
 250:     for r in self._rules:
 251:         if r.compiled.search(normalized):

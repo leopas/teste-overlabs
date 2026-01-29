@@ -8,10 +8,10 @@ Estamos enfrentando um problema persistente ao tentar montar um volume do Azure 
 
 - **Plataforma**: Azure Container Apps
 - **Resource Group**: `rg-overlabs-prod`
-- **Environment**: `env-overlabs-prod-248`
-- **Container App (API)**: `app-overlabs-prod-248`
-- **Container App (Qdrant)**: `app-overlabs-qdrant-prod-248` ✅ **FUNCIONA**
-- **Storage Account**: `saoverlabsprod248`
+- **Environment**: `env-overlabs-prod-300`
+- **Container App (API)**: `app-overlabs-prod-300`
+- **Container App (Qdrant)**: `app-overlabs-qdrant-prod-300` ✅ **FUNCIONA**
+- **Storage Account**: `saoverlabsprod300`
 - **File Share**: `documents` (no Storage Account)
 - **Volume no Environment**: `documents-storage` (configurado corretamente)
 - **Volume no Container App**: `docs` (adicionado manualmente pelo portal)
@@ -24,13 +24,13 @@ Estamos enfrentando um problema persistente ao tentar montar um volume do Azure 
 O Container App do Qdrant foi criado com volume mount desde o início usando:
 
 ```powershell
-az containerapp create --name app-overlabs-qdrant-prod-248 --resource-group rg-overlabs-prod --yaml qdrant.yaml
+az containerapp create --name app-overlabs-qdrant-prod-300 --resource-group rg-overlabs-prod --yaml qdrant.yaml
 ```
 
 **YAML do Qdrant (que funcionou):**
 ```yaml
 properties:
-  environmentId: /subscriptions/.../providers/Microsoft.App/managedEnvironments/env-overlabs-prod-248
+  environmentId: /subscriptions/.../providers/Microsoft.App/managedEnvironments/env-overlabs-prod-300
   configuration:
     ingress:
       external: false
@@ -65,13 +65,13 @@ properties:
 O Container App da API foi criado inicialmente **sem** volume mount. Tentamos adicionar depois usando:
 
 ```powershell
-az containerapp update --name app-overlabs-prod-248 --resource-group rg-overlabs-prod --yaml api.yaml
+az containerapp update --name app-overlabs-prod-300 --resource-group rg-overlabs-prod --yaml api.yaml
 ```
 
 **YAML da API (que NÃO funciona):**
 ```yaml
 properties:
-  environmentId: /subscriptions/.../providers/Microsoft.App/managedEnvironments/env-overlabs-prod-248
+  environmentId: /subscriptions/.../providers/Microsoft.App/managedEnvironments/env-overlabs-prod-300
   configuration:
     ingress:
       external: true
@@ -90,9 +90,9 @@ properties:
       image: acrchoperia.azurecr.io/choperia-api:latest
       env:
       - name: QDRANT_URL
-        value: "http://app-overlabs-qdrant-prod-248:6333"
+        value: "http://app-overlabs-qdrant-prod-300:6333"
       - name: REDIS_URL
-        value: "redis://app-overlabs-redis-prod-248:6379/0"
+        value: "redis://app-overlabs-redis-prod-300:6379/0"
       - name: DOCS_ROOT
         value: "/app/DOC-IA"
       # ... outras env vars ...
@@ -123,7 +123,7 @@ properties:
 ### 1. Volume no Environment (✅ OK)
 ```powershell
 az containerapp env storage show `
-    --name env-overlabs-prod-248 `
+    --name env-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --storage-name documents-storage
 ```
@@ -132,7 +132,7 @@ az containerapp env storage show `
 ### 2. Volume no Container App (✅ OK)
 ```powershell
 az containerapp show `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --query "properties.template.volumes" -o json
 ```
@@ -150,7 +150,7 @@ az containerapp show `
 ### 3. Volume Mount no Container App (❌ FALHA)
 ```powershell
 az containerapp show `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --query "properties.template.containers[0].volumeMounts" -o json
 ```
@@ -159,7 +159,7 @@ az containerapp show `
 ### 4. Teste de Acesso no Container (❌ FALHA)
 ```powershell
 az containerapp exec `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --command "test -d /app/DOC-IA && echo 'EXISTS' || echo 'NOT_FOUND'"
 ```
@@ -284,25 +284,25 @@ O repositório completo está disponível em `repo_concat_all.md` (gerado automa
 ```powershell
 # 1. Verificar volume no Environment (funciona)
 az containerapp env storage show `
-    --name env-overlabs-prod-248 `
+    --name env-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --storage-name documents-storage
 
 # 2. Verificar volume no Container App (existe)
 az containerapp show `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --query "properties.template.volumes" -o json
 
 # 3. Verificar volume mount (NÃO existe - retorna null)
 az containerapp show `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --query "properties.template.containers[0].volumeMounts" -o json
 
 # 4. Verificar nome do container
 az containerapp show `
-    --name app-overlabs-prod-248 `
+    --name app-overlabs-prod-300 `
     --resource-group rg-overlabs-prod `
     --query "properties.template.containers[].name" -o json
 

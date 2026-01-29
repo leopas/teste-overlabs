@@ -192,7 +192,7 @@ python infra/ingest_local_to_prod_qdrant.py
 python infra/ingest_local_to_prod_qdrant.py --truncate-first
 
 # Fornecendo URL diretamente
-python infra/ingest_local_to_prod_qdrant.py --qdrant-url https://app-overlabs-qdrant-prod-248.azurecontainerapps.io
+python infra/ingest_local_to_prod_qdrant.py --qdrant-url https://app-overlabs-qdrant-prod-300.azurecontainerapps.io
 ```
 
 **O que faz**:

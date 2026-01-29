@@ -1,5 +1,5 @@
 # Script para criar/verificar Qdrant Container App com volume persistente
-# Uso: .\infra\bootstrap_qdrant.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-248" -QdrantApp "app-overlabs-qdrant-prod-248" -StorageAccount "saoverlabsprod248" -FileShare "qdrant-storage"
+# Uso: .\infra\bootstrap_qdrant.ps1 -ResourceGroup "rg-overlabs-prod" -Environment "env-overlabs-prod-300" -QdrantApp "app-overlabs-qdrant-prod-300" -StorageAccount "saoverlabsprod300" -FileShare "qdrant-storage"
 
 param(
     [Parameter(Mandatory=$true)]

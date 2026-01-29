@@ -1,13 +1,13 @@
 # Script para corrigir volume mount usando --set (patch direto)
 # 
-# Uso: .\infra\fix_volume_using_set.ps1 -ResourceGroup "rg-overlabs-prod" -ContainerApp "app-overlabs-prod-248"
+# Uso: .\infra\fix_volume_using_set.ps1 -ResourceGroup "rg-overlabs-prod" -ContainerApp "app-overlabs-prod-300"
 #
 # Este script implementa a alternativa robusta usando --set para patch direto,
 # evitando problemas de merge de YAML.
 
 param(
     [string]$ResourceGroup = "rg-overlabs-prod",
-    [string]$ContainerApp = "app-overlabs-prod-248",
+    [string]$ContainerApp = "app-overlabs-prod-300",
     [string]$VolumeName = "docs",
     [string]$MountPath = "/app/DOC-IA",
     [string]$RevisionSuffix = "docsset"
