@@ -18,8 +18,10 @@ Mapa navegável de toda a documentação do projeto.
 ## Deploy e Operação
 
 - [Deploy na Azure](deployment_azure.md) - Guia completo de deploy em Azure Container Apps
+- [Metodologia de Deploy (ACA)](aca_deploy_methodology.md) - Fonte de verdade, fluxos (bootstrap vs CI) e padrões de hardening
 - [Runbook Operacional](runbook.md) - Operações do dia a dia
 - [Runbook de Incidentes](runbook_incidents.md) - Troubleshooting e resolução de problemas
+- [Runbook: Adicionar Secret do Key Vault](runbook_add_keyvault_secret.md) - Adição/rotação de secrets em ACA (keyVaultUrl + identity + secretRef)
 
 ## Referência Técnica
 

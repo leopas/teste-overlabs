@@ -5,6 +5,7 @@ Guia completo para deploy do sistema RAG na Azure usando **Azure Container Apps*
 ## Índice
 
 1. [Arquitetura](#arquitetura)
+2. [Metodologia e fonte de verdade](#metodologia-e-fonte-de-verdade)
 2. [Pré-requisitos](#pré-requisitos)
 3. [Configurar OIDC (Federated Credentials)](#configurar-oidc-federated-credentials)
 4. [Bootstrap da Infraestrutura](#bootstrap-da-infraestrutura)
@@ -51,6 +52,16 @@ flowchart LR
     TRAF -->|100%| PROD[Production]
     PROD -->|rollback| OLD[Revisão Anterior]
 ```
+
+## Metodologia e fonte de verdade
+
+Este repositório separa **provision** (criação idempotente de recursos) de **deploy** (rollout de imagem/revisão).
+
+- **Provision (bootstrap)**: `infra/bootstrap_container_apps.ps1` (estado em `.azure/deploy_state.json`).
+- **Deploy (CI/CD)**: `.github/workflows/deploy-azure.yml` (build/push no ACR e update do Container App).
+- **Infra como código (alternativa)**: `azure/bicep/main.bicep`.
+
+Detalhes e padrões (incluindo Key Vault/identity/RBAC): veja [Metodologia de Deploy (ACA)](aca_deploy_methodology.md).
 
 ## Pré-requisitos
 

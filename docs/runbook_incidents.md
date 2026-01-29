@@ -73,11 +73,23 @@ az containerapp show \
   --resource-group rg-overlabs-prod \
   --query "identity"
 
-# Verificar permissões no Key Vault
+# Verificar se env vars estão usando secretRef (e não value com sintaxe de App Service)
+az containerapp show \
+  --name app-overlabs-prod-XXX \
+  --resource-group rg-overlabs-prod \
+  --query "properties.template.containers[0].env"
+
+# Verificar secrets configurados no Container App
+az containerapp show \
+  --name app-overlabs-prod-XXX \
+  --resource-group rg-overlabs-prod \
+  --query "properties.configuration.secrets"
+
+# Verificar modo de permissão do Key Vault (RBAC vs access policies)
 az keyvault show \
   --name kv-overlabs-prod-XXX \
   --resource-group rg-overlabs-prod \
-  --query "properties.accessPolicies"
+  --query "{enableRbacAuthorization:properties.enableRbacAuthorization,networkAcls:properties.networkAcls}"
 ```
 
 **Solução**:
@@ -97,13 +109,25 @@ az keyvault show \
      --query "identity.principalId" -o tsv)
    ```
 
-3. Conceder permissão no Key Vault:
+3. Conceder permissão no Key Vault (**preferir RBAC**):
    ```bash
-   az keyvault set-policy \
-     --name kv-overlabs-prod-XXX \
-     --object-id $PRINCIPAL_ID \
-     --secret-permissions get list
+   SUB_ID=$(az account show --query id -o tsv)
+   SCOPE="/subscriptions/$SUB_ID/resourceGroups/rg-overlabs-prod/providers/Microsoft.KeyVault/vaults/kv-overlabs-prod-XXX"
+
+   az role assignment create \
+     --scope "$SCOPE" \
+     --assignee-object-id "$PRINCIPAL_ID" \
+     --assignee-principal-type ServicePrincipal \
+     --role "Key Vault Secrets User"
    ```
+   - Se `enableRbacAuthorization=false`, o vault está em **Access Policies**; use `az keyvault set-policy` como fallback (mantendo consistência do ambiente).
+
+4. Verificar firewall do Key Vault (network ACL):
+   - Se `networkAcls` estiver restritivo, garantir que o acesso necessário esteja permitido conforme padrão da organização (caso contrário, o runtime do ACA não conseguirá resolver o secret).
+
+5. Garantir sintaxe correta em ACA:
+   - **Env vars** devem usar `secretRef` (não `value` com `@Microsoft.KeyVault(...)`).
+   - **Secrets** devem estar em `properties.configuration.secrets` apontando para `keyVaultUrl` + identity (ou via CLI `keyvaultref:`).
 
 ---
 

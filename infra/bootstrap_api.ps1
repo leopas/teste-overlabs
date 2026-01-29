@@ -512,6 +512,49 @@ if ($principalId) {
                         
                         if ($LASTEXITCODE -eq 0) {
                             Write-Host "  [OK] Env vars com secretRef configuradas" -ForegroundColor Green
+
+                            # ================================
+                            # Gerar YAML efetivo do recurso (debug) + verificação
+                            # Objetivo: garantir que MYSQL_PASSWORD e OPENAI_API_KEY apareçam no YAML do Container App
+                            # ================================
+                            try {
+                                $expected = @{
+                                    "MYSQL_PASSWORD" = "mysql-password"
+                                    "OPENAI_API_KEY" = "openai-api-key"
+                                }
+
+                                $envList = az containerapp show `
+                                    --name $ApiApp `
+                                    --resource-group $ResourceGroup `
+                                    --query "properties.template.containers[0].env" -o json | ConvertFrom-Json
+
+                                foreach ($k in $expected.Keys) {
+                                    $want = $expected[$k]
+                                    $found = $envList | Where-Object { $_.name -eq $k } | Select-Object -First 1
+                                    if ($found -and $found.secretRef -eq $want) {
+                                        Write-Host "  [OK] $k está no recurso via secretRef: $($found.secretRef)" -ForegroundColor Green
+                                    } else {
+                                        Write-Host "  [AVISO] $k não está no recurso como esperado (secretRef=$want). Verifique o estado do Container App." -ForegroundColor Yellow
+                                    }
+                                }
+
+                                # Export do YAML efetivo do recurso (sem commitar; .azure é gitignored)
+                                $repoRoot = Split-Path $PSScriptRoot -Parent
+                                $azureDir2 = Join-Path $repoRoot ".azure"
+                                if (-not (Test-Path $azureDir2)) { New-Item -ItemType Directory -Path $azureDir2 -Force | Out-Null }
+                                $yamlOut = Join-Path $azureDir2 "container-app-api-kv-effective.yaml"
+
+                                $utf8NoBom2 = New-Object System.Text.UTF8Encoding $false
+                                $effectiveYaml = az containerapp show --name $ApiApp --resource-group $ResourceGroup -o yaml 2>$null
+                                if ($effectiveYaml) {
+                                    [System.IO.File]::WriteAllText($yamlOut, $effectiveYaml, $utf8NoBom2)
+                                    Write-Host "  [OK] YAML efetivo salvo em: $yamlOut" -ForegroundColor Green
+                                } else {
+                                    Write-Host "  [AVISO] Não foi possível exportar YAML efetivo do recurso (az containerapp show -o yaml)" -ForegroundColor Yellow
+                                }
+                            } catch {
+                                Write-Host "  [AVISO] Falha ao verificar/exportar YAML efetivo: $_" -ForegroundColor Yellow
+                            }
                         } else {
                             Write-Host "  [AVISO] Falha ao configurar env vars com secretRef" -ForegroundColor Yellow
                         }
