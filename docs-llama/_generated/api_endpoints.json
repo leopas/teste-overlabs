@@ -1,0 +1,22 @@
+[
+  {
+    "method": "GET",
+    "path": "/admin"
+  },
+  {
+    "method": "GET",
+    "path": "/healthz"
+  },
+  {
+    "method": "GET",
+    "path": "/readyz"
+  },
+  {
+    "method": "GET",
+    "path": "/metrics"
+  },
+  {
+    "method": "POST",
+    "path": "/ask"
+  }
+]
