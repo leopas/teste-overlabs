@@ -1,5 +1,9 @@
 # Fix: Qdrant via HTTPS no FQDN do ingress (ACA)
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Causa raiz
 No Azure Container Apps, quando o ingress do Qdrant é **HTTP (L7)** com `targetPort: 6333`, **a porta 6333 não é exposta diretamente** para outros apps. O `targetPort` é a porta **dentro do container**; o tráfego entra via **80/443** no ingress.
 

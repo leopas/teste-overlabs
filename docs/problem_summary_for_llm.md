@@ -1,5 +1,9 @@
 # Prompt: Problema de Resolução de Key Vault Secrets no Azure Container Apps
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Contexto do Problema
 
 Estamos desenvolvendo uma aplicação RAG (Retrieval-Augmented Generation) em Python que roda em **Azure Container Apps**. A aplicação precisa acessar secrets do **Azure Key Vault** (como `OPENAI_API_KEY`, `MYSQL_PASSWORD`, etc.) através de variáveis de ambiente.

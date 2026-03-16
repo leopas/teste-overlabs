@@ -1,5 +1,9 @@
 # Metodologia de Deploy (Azure Container Apps)
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Este documento descreve **como este repositório opera o deploy** em Azure Container Apps (ACA), quais são as **fontes de verdade**, e os **padrões de hardening** (especialmente para Key Vault).
 
 ## Fonte de verdade (por camada)

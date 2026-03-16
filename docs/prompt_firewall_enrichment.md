@@ -1,5 +1,9 @@
 # Prompt Firewall Rule Enricher
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Ferramenta CLI para enriquecer `config/prompt_firewall.regex`: propõe novas regras multi-idioma (OpenAI), valida regex/perf/qualidade no corpus e gera sempre um **patch** revisável. Nunca edita o ficheiro de regras silenciosamente.
 
 ## Idiomas suportados

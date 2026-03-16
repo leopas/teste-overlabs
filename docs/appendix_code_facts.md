@@ -1,5 +1,9 @@
 # Apêndice: fatos do código (auditoria)
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Uma página de referência com **fatos confirmados** no código atual. Use para validar que a documentação não faz promessas falsas.
 
 ---

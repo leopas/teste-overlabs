@@ -1,5 +1,9 @@
 # Deploy na Azure
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Este diretório contém scripts e configurações para fazer deploy do sistema RAG na Azure usando Azure Container Apps.
 
 ## Arquitetura

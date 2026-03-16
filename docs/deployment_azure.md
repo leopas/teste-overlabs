@@ -1,5 +1,9 @@
 # Deploy na Azure Container Apps via GitHub Actions
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Guia completo para deploy do sistema RAG na Azure usando **Azure Container Apps**, GitHub Actions com OIDC, Key Vault para secrets, e Azure Files para persistência.
 
 ## Índice

@@ -1,8 +1,33 @@
 # teste-overlabs - Sistema RAG com Recusa Inteligente
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 > **⚠️ Aviso de Confidencialidade**: Este repositório é confidencial e destinado apenas para fins de avaliação. Veja [CONFIDENTIALITY.md](CONFIDENTIALITY.md) para detalhes.
 
 Sistema RAG que responde perguntas sobre documentos internos com **recusa quando não há evidência suficiente**, priorizando documentos mais confiáveis e mais recentes.
+
+## Origem do Firewall Heurístico e Evolução
+
+Este repositório também é a origem da camada heurística de proteção que mais tarde foi migrada seletivamente para o projeto `contextual-firewall`.
+
+Aqui nasceram componentes como:
+
+- `prompt_firewall`
+- `abuse_classifier`
+- normalização de texto para detecção
+- regras regex de bloqueio
+- metadados de auditoria como `firewall_rule_ids`, `abuse_risk_score`, `abuse_flags_json` e correlação por `trace_id`
+
+No `contextual-firewall`, esse legado passou a ser tratado como `legacy deterministic firewall`: uma camada determinística auxiliar encapsulada por `LegacyFirewallFacade` e integrada ao pipeline de inspeção por `InspectContextUseCase`. O projeto destino expandiu essa base com `ClassificationPort`, modos `heuristic` e `lora_small_model`, policy engine versionado, benchmark offline, trilha de treino LoRA, observabilidade por `/metrics` e auditoria consolidada por `AuditRecord`.
+
+Resumo de leitura:
+
+- [docs/heuristic_firewall_migration.md](docs/heuristic_firewall_migration.md): origem, mapeamento e destino arquitetural do legado heurístico
+- [docs/prompt_firewall.md](docs/prompt_firewall.md): comportamento do firewall neste repositório
+- [docs/security.md](docs/security.md): guardrails locais e contexto de evolução
+- [docs/architecture.md](docs/architecture.md): boundary arquitetural entre esta base e o `contextual-firewall`
 
 ### Titularidade e Contato
 **Titular/Mantenedor:** Leopoldo Carvalho Correia de Lima  
@@ -336,6 +361,7 @@ curl -X POST https://<fqdn>/ask \
 
 ## Documentação detalhada
 
+- **[Migração do Firewall Heurístico](docs/heuristic_firewall_migration.md)**: origem na Overlabs, mapeamento para o `contextual-firewall` e evolução arquitetural
 - **[Arquitetura](docs/architecture.md)**: Diagramas e componentes
 - **[Controles de Qualidade](docs/quality-controls.md)**: Threshold, cross-check, conflitos, pós-validação
 - **[Segurança](docs/security.md)**: Validação, prompt injection, bloqueio sensível

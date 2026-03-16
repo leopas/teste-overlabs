@@ -1,5 +1,9 @@
 # Referências do Key Vault: App Service vs Container Apps
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Problema Identificado
 
 O código estava usando a sintaxe de **Azure App Service** (`@Microsoft.KeyVault(...)`) para referenciar secrets do Key Vault, mas isso **não funciona** em **Azure Container Apps**.

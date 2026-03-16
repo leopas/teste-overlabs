@@ -1,5 +1,9 @@
 # Confidentiality Notice (Evaluation Repository) — Aviso de Confidencialidade (Repositório para Avaliação)
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## EN — Confidentiality Notice (Evaluation Repository)
 
 This repository and all its contents (source code, scripts, configurations, documentation, diagrams, and any related materials) are shared with Overlabs **for evaluation purposes** and are intended to be treated as **confidential**.

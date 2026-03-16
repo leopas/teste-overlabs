@@ -1,6 +1,18 @@
 # Guia do Avaliador — RAG MVP
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Documentação para banca técnica: escopo, como rodar e como validar em poucos minutos.
+
+## Origem do Firewall Heurístico
+
+O firewall heurístico que protege este projeto nasceu neste repositório. A base original inclui `prompt_firewall`, `abuse_classifier`, normalização de texto, regex de bloqueio e metadados de auditoria como `firewall_rule_ids`, `abuse_risk_score`, `abuse_flags_json` e `trace_id`.
+
+Essa lógica foi migrada seletivamente para o projeto `contextual-firewall`, onde hoje aparece como `legacy deterministic firewall`. No sistema destino, ela foi encapsulada sob `LegacyFirewallFacade` e integrada ao pipeline canônico de inspeção por `InspectContextUseCase`, convivendo com `ClassificationPort`, policy engine versionado, modos `heuristic` e `lora_small_model`, benchmark offline, treino LoRA e auditoria baseada em `AuditRecord`.
+
+Para a narrativa histórica e o mapeamento completo, veja [Migração do Firewall Heurístico](heuristic_firewall_migration.md).
 
 ---
 
@@ -104,11 +116,12 @@ Resumo: [Runbook](runbook.md), [Traceability](traceability.md), [Audit](audit_lo
 
 | Documento | Conteúdo |
 |-----------|----------|
+| [Migração do Firewall Heurístico](heuristic_firewall_migration.md) | Origem na Overlabs, mapeamento para o `contextual-firewall`, evolução do legado e lacunas históricas |
 | [Arquitetura e fluxos](architecture.md) | Componentes, C4, deployment, sequência `/ask`, pipeline de ingestão, decisões, mapa do código |
 | [Layout (relatório gerado)](layout_report.md) | Exemplo de saída do `scan_docs` e recomendações de chunking |
 | [Rastreabilidade](traceability.md) | Headers, trace_id/request_id, pipeline trace, OTel opcional |
 | [Audit logging](audit_logging.md) | Session, answer source, persistência (audit_session, audit_message, audit_ask, chunks), rule_id no firewall |
-| [Segurança](security.md) | Guardrails, Prompt Firewall, PII, audit, threat model |
+| [Segurança](security.md) | Guardrails, Prompt Firewall, PII, audit, threat model e contexto de evolução para o `contextual-firewall` |
 | [Observabilidade](observability.md) | Logs, Prometheus, OTel, SLOs sugeridos |
 | [CI e testes](ci.md) | Testes unitários, prod-like (Docker), coverage |
 | [Runbook](runbook.md) | Como rodar, scan/ingest, cache, Qdrant, Redis |
@@ -138,6 +151,18 @@ Isso permite que clientes tratem sucesso/recusa apenas pelo corpo e pelos header
 - **Prompt Firewall:** Desabilitado por padrão; regras em arquivo regex.
 - **Audit em MySQL:** Exige `TRACE_SINK=mysql` e `MYSQL_*` configurados; caso contrário, audit sink é noop.
 - **OTel:** Opcional; não quebra se não houver collector.
+
+## Terminologia recomendada
+
+Ao descrever a evolução deste repositório em relação ao `contextual-firewall`, prefira a linguagem canônica do projeto destino:
+
+- `finding`: achado estruturado produzido por regra ou detector
+- `policy hit`: regra do engine acionada durante a inspeção
+- `prediction`: saída do `ClassificationPort`
+- `decision`: `ALLOW`, `REDACT` ou `BLOCK`
+- `AuditRecord`: registro de auditoria do sistema destino
+
+Neste repositório, alguns desses nomes ainda aparecem com outra forma de modelagem, mas a documentação passa a usar essa terminologia para manter consistência histórica e arquitetural.
 
 ---
 

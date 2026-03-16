@@ -1,5 +1,9 @@
 # PR: Migração Key Vault para padrão Azure Container Apps
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Objetivo
 
 Migrar todas as referências de Key Vault do formato App Service (`@Microsoft.KeyVault(SecretUri=...)`) para o padrão correto do Azure Container Apps: secrets em `properties.configuration.secrets` com `keyVaultUrl` + `identity`, e env vars referenciando `secretRef` (nunca `value` com `@Microsoft.KeyVault(...)`).

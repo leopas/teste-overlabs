@@ -1,5 +1,9 @@
 # Prompt Firewall (WAF de prompt)
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Visão geral
 
 O **Prompt Firewall** é uma camada configurável de regras regex executada **antes** dos guardrails de injection/sensitive, do retriever e da LLM. Quando uma regra casa com a pergunta do usuário, a requisição é recusada com `200`, `sources=[]`, `confidence ≤ 0.3`, sem chamar retriever nem LLM.
@@ -10,6 +14,40 @@ O **Prompt Firewall** é uma camada configurável de regras regex executada **an
 - Hot reload por `mtime`: editar o arquivo dispensa restart da API
 - Throttle do `stat`: checagem de alteração limitada por `PROMPT_FIREWALL_RELOAD_CHECK_SECONDS`
 - **Desabilitado por padrão**: não altera o comportamento em produção até ser ativado
+
+## Origem e migração do legado
+
+O `Prompt Firewall` documentado aqui é a origem da camada heurística que mais tarde foi importada seletivamente para o projeto `contextual-firewall`.
+
+Nesta base Overlabs, ele nasceu junto de:
+
+- `abuse_classifier`
+- normalização de texto para matching consistente
+- regex versionadas em `config/prompt_firewall.regex`
+- persistência de metadados como `firewall_rule_ids`, `abuse_risk_score`, `abuse_flags_json` e `trace_id`
+
+No `contextual-firewall`, essa trilha passou a viver como `legacy deterministic firewall`, encapsulada por `LegacyFirewallFacade` e integrada ao pipeline canônico via `InspectContextUseCase`.
+
+## Mapeamento para o `contextual-firewall`
+
+| Overlabs | `contextual-firewall` | Observação |
+| --- | --- | --- |
+| `prompt_firewall` | `legacy_firewall` | Camada determinística auxiliar dentro do runtime de inspeção |
+| `abuse_classifier` | componentes auxiliares do `legacy_firewall` | Sinais agregados de risco continuam existindo, mas sob contrato mais explícito |
+| normalização de texto | `legacy_firewall/normalizer.py` | Normalização isolada em módulo próprio |
+| `config/prompt_firewall.regex` | `configs/firewall/prompt_firewall.regex` | Arquivo canônico de regras versionadas |
+| `firewall_rule_ids`, `abuse_risk_score`, `abuse_flags_json`, `trace_id` | `AuditRecord.payload` e `kpi_snapshot` | Evolução dos metadados de auditoria e observabilidade |
+
+## Terminologia canônica
+
+Ao relacionar esta implementação ao `contextual-firewall`, use preferencialmente:
+
+- `finding`: achado estruturado produzido por regra ou detector
+- `policy hit`: regra do engine acionada no projeto destino
+- `prediction`: saída do `ClassificationPort`
+- `decision`: `ALLOW`, `REDACT` ou `BLOCK`
+
+Neste repositório, o `Prompt Firewall` produz bloqueio determinístico e sinais de risco locais; no sistema destino, esses sinais passam a coexistir com policy e classificação contextual.
 
 ## Variáveis de ambiente
 
@@ -81,6 +119,8 @@ Quando `PROMPT_FIREWALL_ENABLED=0`, o sistema ainda bloqueia injection via fallb
 ## Classificação de risco (scan_for_abuse)
 
 O Prompt Firewall expõe o método `scan_for_abuse()` que calcula um **score de risco** e **flags** baseado nas regras que casam, **sem bloquear** a requisição. Este método é usado pelo `abuse_classifier` para classificação de abuso.
+
+Quando essa lógica é descrita do ponto de vista do `contextual-firewall`, ela corresponde à produção de sinais que alimentam a camada `legacy deterministic firewall`. No destino arquitetural, esses sinais convivem com `policy hits`, `prediction` e uma `decision` final sintetizada pelo runtime.
 
 ### Metodologia de cálculo
 
@@ -185,3 +225,4 @@ O `docker-compose` monta `./config` em `/app/config`. O default `PROMPT_FIREWALL
 
 - [prompt_firewall_perf.md](prompt_firewall_perf.md): métricas, logs, boas práticas de regex e política de versionamento.
 - [prompt_firewall_enrichment.md](prompt_firewall_enrichment.md): enricher CLI (propose / validate / apply), corpus e política de revisão.
+- [heuristic_firewall_migration.md](heuristic_firewall_migration.md): origem do legado heurístico e mapeamento para o `contextual-firewall`.

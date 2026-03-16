@@ -1,5 +1,9 @@
 # Rastreabilidade (traceability)
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Este backend gera um **trace técnico** por chamada ao `POST /ask`, correlacionando `request_id`, `trace_id`, `user_id` (quando houver JWT), decisões de guardrails/qualidade, cache, retrieval, LLM e resultado. Os **headers de resposta** permitem correlacionar com audit e logs.
 
 ---

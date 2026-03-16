@@ -1,5 +1,9 @@
 # Exemplos de mensagens bloqueadas pelo Prompt Firewall
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Exemplos de perguntas que seriam **automaticamente bloqueadas** pelas regras do Prompt Firewall (quando `PROMPT_FIREWALL_ENABLED=1`).
 
 ---

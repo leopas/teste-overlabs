@@ -1,5 +1,9 @@
 # PR: Migração Key Vault References para Sintaxe Correta do Container Apps
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Resumo
 
 Migração completa de todas as referências de Key Vault do formato App Service (`@Microsoft.KeyVault(...)`) para o formato correto do Azure Container Apps (secrets com `keyVaultUrl` + `identity` e env vars com `secretRef`).

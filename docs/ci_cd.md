@@ -1,5 +1,9 @@
 # CI/CD Pipeline - teste-overlabs
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Documentação completa do pipeline de CI/CD usando GitHub Actions e Azure Container Apps.
 
 ## Visão Geral

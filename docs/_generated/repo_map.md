@@ -1,5 +1,9 @@
 # Mapa do Repositório
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 > **Nota**: Este arquivo é gerado automaticamente por `tools/docs_extract.py`.
 > Não edite manualmente. Execute `python tools/docs_extract.py` para atualizar.
 

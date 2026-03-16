@@ -1,3 +1,7 @@
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Relatório de layout (gerado)
 - Gerado em: `2026-01-26T14:54:50.578185+00:00`
 - DOCS_ROOT: `/docs`

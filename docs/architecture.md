@@ -1,6 +1,29 @@
 # Arquitetura
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Visão técnica dos componentes e como interagem.
+
+## Origem do legado heurístico e boundary arquitetural
+
+Este repositório é a origem do firewall heurístico que depois foi migrado seletivamente para o `contextual-firewall`.
+
+Na Overlabs, a proteção nasceu como uma combinação de:
+
+- `prompt_firewall`
+- `abuse_classifier`
+- normalização de texto
+- regex de bloqueio
+- metadados de auditoria como `firewall_rule_ids`, `abuse_risk_score`, `abuse_flags_json` e `trace_id`
+
+No `contextual-firewall`, essa base foi encapsulada como `legacy deterministic firewall` e passou a entrar no runtime por meio de `LegacyFirewallFacade`, sob orquestração de `InspectContextUseCase`. A arquitetura de destino expandiu o escopo original com `PolicyEngine`, `ClassificationPort`, modos `heuristic` e `lora_small_model`, `AuditRecord`, `/metrics`, benchmark offline e trilha de treino LoRA.
+
+Neste documento, portanto:
+
+- quando o assunto é `POST /ask`, `Prompt Firewall`, fallback heurístico e auditoria local, a referência é a implementação real deste repositório
+- quando aparecem termos como `LegacyFirewallFacade`, `InspectContextUseCase`, `ClassificationPort` e `AuditRecord`, a referência é o destino arquitetural do legado no `contextual-firewall`
 
 ## Diagrama de Componentes
 
@@ -111,6 +134,32 @@ flowchart TB
 11. **Quality checks**: Threshold, cross-check, post-validate (linhas 850-870)
 12. **Retorna**: Resposta ou recusa
 
+## Mapeamento para o `contextual-firewall`
+
+O mapeamento histórico mais importante entre esta base e o projeto destino é:
+
+| Overlabs | `contextual-firewall` | Papel |
+| --- | --- | --- |
+| `prompt_firewall` | `legacy_firewall` | Camada determinística auxiliar de proteção |
+| `abuse_classifier` | componentes auxiliares do `legacy_firewall` | Sinais agregados de abuso e risco |
+| normalização de texto | `legacy_firewall/normalizer.py` | Padronização do texto antes do matching |
+| `config/prompt_firewall.regex` | `configs/firewall/prompt_firewall.regex` | Regras versionadas de bloqueio |
+| metadados locais de auditoria | `AuditRecord.payload` e `kpi_snapshot` | Evolução da rastreabilidade operacional |
+
+## Evolução arquitetural do destino
+
+O `contextual-firewall` evoluiu a partir desta base heurística e hoje organiza o problema em uma arquitetura maior:
+
+- pipeline canônico de `POST /inspect`
+- `LegacyFirewallFacade` para o legado determinístico
+- `ClassificationPort` para classificação contextual
+- `decision` final (`ALLOW`, `REDACT`, `BLOCK`) com evidências auditáveis
+- observabilidade por `trace_id` e `/metrics`
+- auditoria unificada por `AuditRecord`
+- benchmark offline, blocking matrix e trilha de treino LoRA
+
+Este repositório não implementa esses componentes com esses nomes, mas documenta a origem dos mecanismos que foram incorporados ao sistema destino.
+
 ---
 
 ## Deploy
@@ -141,3 +190,4 @@ flowchart TB
 - [Controles de Qualidade](quality-controls.md) - Validação de respostas
 - [Segurança](security.md) - Guardrails de segurança
 - [Custo e Performance](cost-performance.md) - Otimizações
+- [Migração do Firewall Heurístico](heuristic_firewall_migration.md) - Contexto histórico, mapeamento e evolução

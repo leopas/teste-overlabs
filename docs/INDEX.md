@@ -1,5 +1,9 @@
 # Índice da Documentação - teste-overlabs
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 > **⚠️ Aviso de Confidencialidade**: Este repositório é confidencial e destinado apenas para fins de avaliação. Veja [CONFIDENTIALITY.md](../CONFIDENTIALITY.md) para detalhes.
 
 Mapa navegável de toda a documentação do projeto.
@@ -7,6 +11,7 @@ Mapa navegável de toda a documentação do projeto.
 ## Visão Geral
 
 - [README Principal](../README.md) - Porta de entrada do projeto
+- [Migração do Firewall Heurístico](heuristic_firewall_migration.md) - Origem do legado heurístico e relação com o `contextual-firewall`
 - [Arquitetura](architecture.md) - Visão técnica dos componentes
 - [Diagramas](diagrams.md) - Diagramas detalhados do sistema
 
@@ -37,6 +42,13 @@ Mapa navegável de toda a documentação do projeto.
 - [Audit Logging](audit_logging.md) - Sistema de auditoria e rastreabilidade
 - [Traceability](traceability.md) - Rastreabilidade de requests
 - [Observability](observability.md) - Logs, métricas, OpenTelemetry
+
+### Histórico e Migração
+
+- [Migração do Firewall Heurístico](heuristic_firewall_migration.md) - Contexto histórico, mapeamento Overlabs -> `contextual-firewall` e terminologia canônica
+- [Arquitetura](architecture.md) - Boundary técnico entre a implementação local e o destino arquitetural do legado
+- [Prompt Firewall](prompt_firewall.md) - Detalhes da camada heurística original
+- [Segurança](security.md) - Guardrails locais e seu papel na evolução do sistema
 
 ### Prompt Firewall
 
@@ -70,9 +82,10 @@ Mapa navegável de toda a documentação do projeto.
 ### Para Desenvolvedores
 
 1. **Primeiro contato**: Leia o [README](../README.md) e [Arquitetura](architecture.md)
-2. **Setup local**: Siga o [Guia de Desenvolvimento Local](local-development.md)
-3. **Entender a API**: Veja [API Reference](api.md)
-4. **Configurar ambiente**: Consulte [Variáveis de Ambiente](reference/env-vars.md)
+2. **Contexto histórico**: Leia [Migração do Firewall Heurístico](heuristic_firewall_migration.md)
+3. **Setup local**: Siga o [Guia de Desenvolvimento Local](local-development.md)
+4. **Entender a API**: Veja [API Reference](api.md)
+5. **Configurar ambiente**: Consulte [Variáveis de Ambiente](reference/env-vars.md)
 
 ### Para DevOps/Platform
 
@@ -93,6 +106,7 @@ Mapa navegável de toda a documentação do projeto.
 ```
 docs/
 ├── INDEX.md                    # Este arquivo
+├── heuristic_firewall_migration.md # Origem e migração do firewall heurístico
 ├── architecture.md            # Arquitetura do sistema
 ├── local-development.md        # Desenvolvimento local
 ├── deployment_azure.md         # Deploy Azure Container Apps

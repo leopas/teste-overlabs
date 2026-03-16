@@ -1,5 +1,9 @@
 # Como Configurar Secrets no GitHub
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Guia passo a passo para configurar os secrets necessários para o deploy na Azure.
 
 ## Localização

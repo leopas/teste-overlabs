@@ -1,6 +1,22 @@
 # Segurança
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 O que o sistema bloqueia e como protege contra ataques.
+
+## Contexto histórico e evolução
+
+Os guardrails documentados aqui representam a forma original da camada heurística criada neste repositório Overlabs. Essa base inclui `prompt_firewall`, `abuse_classifier`, normalização de texto, regex de bloqueio e metadados de auditoria associados ao fluxo de `POST /ask`.
+
+Mais tarde, essa lógica foi migrada seletivamente para o `contextual-firewall`, onde hoje aparece como `legacy deterministic firewall`. No sistema destino, o legado passou a coexistir com uma arquitetura maior, incluindo `LegacyFirewallFacade`, `InspectContextUseCase`, `ClassificationPort`, policy engine versionado, `AuditRecord`, `/metrics`, benchmark offline e trilha de treino LoRA.
+
+Para manter a documentação coerente entre origem e destino, vale separar três níveis de leitura:
+
+- comportamento local real: fallback heurístico, Prompt Firewall, detecção de sensível/PII e recusa imediata
+- mapeamento histórico: como esses componentes foram importados para o `contextual-firewall`
+- estado atual do destino: `finding`, `policy hit`, `prediction` e `decision` (`ALLOW`, `REDACT`, `BLOCK`)
 
 ## Validação de Input
 
@@ -119,6 +135,10 @@ def detect_sensitive_request(question: str) -> bool:
 
 **Nota**: Quando habilitado, substitui o fallback de prompt injection em `security.py`.
 
+### Mapeamento histórico
+
+No `contextual-firewall`, esta camada corresponde ao `legacy deterministic firewall`, encapsulado por `LegacyFirewallFacade`. A implementação local continua sendo a origem do matching determinístico; o sistema destino apenas reorganiza esse legado dentro de um runtime maior.
+
 ---
 
 ## Rate Limiting
@@ -162,6 +182,18 @@ def rate_limit_allow(self, ip: str, limit_per_minute: int) -> bool:
 5. **Sensitive request**: Verifica CPF, cartão, segredos (linha 360)
 6. **Se bloqueado**: Recusa imediatamente, não chama retriever/LLM
 
+## Linguagem recomendada para documentação cruzada
+
+Quando esta base for comparada ao `contextual-firewall`, use a terminologia canônica do projeto destino:
+
+- `finding`: achado estruturado gerado por regra, detector ou facade
+- `policy hit`: regra do `PolicyEngine` acionada
+- `prediction`: saída do `ClassificationPort`
+- `decision`: resultado final `ALLOW`, `REDACT` ou `BLOCK`
+- `AuditRecord`: registro de auditoria do sistema destino
+
+Importante: esses nomes não substituem automaticamente os modelos locais. Eles servem para descrever a evolução do legado com vocabulário consistente.
+
 ---
 
 ## Limitações
@@ -177,3 +209,5 @@ def rate_limit_allow(self, ip: str, limit_per_minute: int) -> bool:
 
 - [Controles de Qualidade](quality-controls.md) - Validação de respostas
 - [Arquitetura](architecture.md) - Visão geral do sistema
+- [Prompt Firewall](prompt_firewall.md) - Detalhes da camada heurística local
+- [Migração do Firewall Heurístico](heuristic_firewall_migration.md) - Origem, mapeamento e evolução para o `contextual-firewall`

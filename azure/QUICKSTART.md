@@ -1,5 +1,9 @@
 # 🚀 Quick Start - Deploy na Azure
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 Guia rápido para subir o sistema RAG na Azure em ~15 minutos.
 
 ## Pré-requisitos

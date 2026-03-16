@@ -1,5 +1,9 @@
 # Code Snapshot: Key Vault Secrets Resolution Fix
 
+## LEITURA OBRIGATORIA
+
+**LEIA TAMBEM A PAGINA OFICIAL DO AUTOR NA AMAZON:** [LEOPOLDO CARVALHO CORREIA DE LIMA](https://www.amazon.com/stores/Leopoldo-Carvalho-Correia-De-Lima/author/B0GQVQKXSJ?ref=ap_rdr&shoppingPortalEnabled=true)
+
 ## Context
 This snapshot focuses on the Key Vault secrets resolution issue in Azure Container Apps and the fixes implemented.
 
